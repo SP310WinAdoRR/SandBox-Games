@@ -193,30 +193,29 @@ def encode_cpp_osc_grid(heights: list[float]) -> bytes:
 def run_self_test() -> int:
     """
     Ejecuta una prueba de integración completa en local verificando:
-      1. Paquete binario crudo idéntico al C++ (sendGridElevationsOSC) -> OSCDataProvider
-      2. MagicSandBridgeClient -> Servidor receptor del Motor (:17001)
+      1. Paquete binario crudo idéntico al C++ (sendGridElevationsOSC) -> OSCSandInputAdapter
+      2. OSCProjectionOutputAdapter -> Servidor receptor del Motor (:17001)
     (Usa puertos 17000/17001 para no colisionar si ya tienes main.py abierto).
     """
     import os
     import socket
     import sys
 
-    game_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "quadrant_game")
-    if game_dir not in sys.path:
-        sys.path.insert(0, game_dir)
+    root_dir = os.path.dirname(os.path.abspath(__file__))
+    if root_dir not in sys.path:
+        sys.path.insert(0, root_dir)
 
-    from src.data_provider import OSCDataProvider
-    from src.bridge_client import MagicSandBridgeClient
+    from core.network import OSCSandInputAdapter, OSCProjectionOutputAdapter
 
     tx_test_port = 17000
     rx_test_port = 17001
 
-    print("=== INICIANDO PRUEBA DE INTEGRACIÓN UDP/OSC (MOTOR C++ <-> VIDEOJUEGO PYTHON) ===")
+    print("=== INICIANDO PRUEBA DE INTEGRACIÓN UDP/OSC (MOTOR C++ <-> CORE NETWORK) ===")
     engine = MockCppEngine(host="127.0.0.1", tx_port=tx_test_port, rx_port=rx_test_port)
     engine.start_rx_server()
 
-    provider = OSCDataProvider(ip="127.0.0.1", port=tx_test_port, cols=2, rows=2)
-    bridge = MagicSandBridgeClient(host="127.0.0.1", port=rx_test_port)
+    provider = OSCSandInputAdapter(ip="127.0.0.1", port=tx_test_port, cols=2, rows=2)
+    bridge = OSCProjectionOutputAdapter(host="127.0.0.1", port=rx_test_port)
 
     try:
         # 1. Simular envío binario exacto de C++ (CRemoteGameController::sendGridElevationsOSC)

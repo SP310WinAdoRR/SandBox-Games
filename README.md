@@ -32,16 +32,17 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Ejecutar el Juego en Producción (`quadrant_game/main.py`):
+### 2. Ejecutar un Juego en Producción (`main.py`):
 ```bash
-./.venv/bin/python quadrant_game/main.py --patient PACIENTE_01
+./.venv/bin/python main.py --game quadrant_game --patient PACIENTE_01
 ```
-* Ejecuta exclusivamente la consola clínica y el motor lógico del juego, conectándose por UDP/OSC al motor C++ (`127.0.0.1:7000` RX y `127.0.0.1:7001` TX).
+* `main.py` actúa como **Composition Root (Inyector de Dependencias)**: instancia los adaptadores de red (`OSCSandInputAdapter` y `OSCProjectionOutputAdapter`), los inyecta en el juego seleccionado dentro de `games/` y delega las ventanas a `PygameApplicationRunner`.
 
-### 3. Herramientas de Testeo y Emulación (Fuera de la carpeta del juego):
+### 3. Herramientas de Testeo y Emulación:
 * **Emulador con Ratón y Doble Ventana (`test_emulator.py`):**
+  Inyecta `EmulatorSandInputAdapter` (en lugar de OSC) a cualquier juego de `games/` sin tocar el código del juego:
   ```bash
-  ./.venv/bin/python test_emulator.py
+  ./.venv/bin/python test_emulator.py --game quadrant_game
   ```
 * **Simulador del Motor C++ por Red (`mock_engine_osc.py`):**
   ```bash
@@ -50,22 +51,28 @@ pip install -r requirements.txt
 
 ---
 
-## 📂 Estructura del Proyecto
+## 📂 Arquitectura Modular por Inyección de Dependencias
+
+Los juegos dentro de `games/` son tratados como **cajas negras (`ISandboxGame`)** que no conocen `pythonosc`, ni sockets UDP, ni crean ventanas `pygame.Window`. Toda la infraestructura de conexión y renderizado se inyecta desde `core/`:
 
 ```
 SandBox-Games/
-├── README.md                   # Documentación general de la suite
-├── requirements.txt            # Dependencias (pygame-ce, python-osc)
-├── test_emulator.py            # Script de testeo local con ratón y doble ventana (Emulador)
-├── mock_engine_osc.py          # Script de testeo/simulación del motor C++ (UDP/OSC)
-└── quadrant_game/              # Juego 1: Rehabilitación por Cuadrantes (Solo archivos esenciales)
-    ├── main.py                 # Ejecución pura del juego en producción
-    ├── configs/                # Perfiles de configuración (.env: default, baja/alta exigencia)
-    ├── records/                # Reportes clínicos exportados de las sesiones (CSV/JSON)
-    └── src/
-        ├── data_provider.py    # Receptor OSC de alturas del Kinect (:7000)
-        ├── bridge_client.py    # Emisor UDP/OSC de comandos de proyección hacia C++ (:7001)
-        ├── config_manager.py   # Gestor de archivos .env (Modo Fácil y Modo Avanzado)
-        ├── metrics.py          # Registro y exportación de métricas clínicas
-        └── quadrant_game.py    # Lógica, progresión de niveles y UI de Telemetría
+├── main.py                         # Composition Root (Inyector de Dependencias de Producción)
+├── test_emulator.py                # Runner de testeo (inyecta emulador de ratón + 2da ventana)
+├── mock_engine_osc.py              # Simulador externo del motor C++ (UDP/OSC)
+├── core/                           # Infraestructura de Build, Red y Contratos DI
+│   ├── contracts.py                # Interfaces: ISandInputPort, IProjectionOutputPort, ISandboxGame
+│   ├── network/                    # Transmisión y Recepción UDP/OSC
+│   │   ├── osc_receiver.py         # OSCSandInputAdapter (RX :7000)
+│   │   └── osc_transmitter.py      # OSCProjectionOutputAdapter (TX :7001)
+│   └── runtime/                    # Ciclo de vida de ventanas y superficies Pygame
+│       └── pygame_runner.py        # PygameApplicationRunner y cargador dinámico de plugins
+└── games/                          # Catálogo de Juegos (Cajas Negras independientes)
+    └── quadrant_game/              # Juego 1: Rehabilitación por Cuadrantes
+        ├── __init__.py             # Fábrica create_game(input_port, output_port, ...)
+        ├── game.py                 # QuadrantTherapyGame(ISandboxGame)
+        ├── config_manager.py       # Gestor de archivos .env del juego
+        ├── metrics.py              # Exportación de métricas clínicas (CSV/JSON)
+        ├── configs/                # Perfiles .env (default, baja_exigencia, alta_exigencia)
+        └── records/                # Reportes clínicos exportados
 ```

@@ -1,34 +1,18 @@
+"""
+Adaptador de Recepción de Información (UDP/OSC RX).
+Implementa ISandInputPort para ser inyectado en cualquier juego.
+"""
 from __future__ import annotations
 import threading
-from abc import ABC, abstractmethod
 from pythonosc.dispatcher import Dispatcher
 from pythonosc.osc_server import BlockingOSCUDPServer
+from core.contracts import ISandInputPort
 
 
-class BaseDataProvider(ABC):
+class OSCSandInputAdapter(ISandInputPort):
     """
-    Interfaz abstracta de proveedor de alturas de la arena.
-    """
-    @abstractmethod
-    def get_heights(self) -> list[float]:
-        """Retorna una lista con la elevación media (en milímetros) de cada celda."""
-        pass
-
-    @abstractmethod
-    def set_grid_size(self, cols: int, rows: int):
-        """Reconfigura las dimensiones de la cuadrícula."""
-        pass
-
-    @abstractmethod
-    def reset(self):
-        """Nivela o aplana la arena a 0 mm."""
-        pass
-
-
-class OSCDataProvider(BaseDataProvider):
-    """
-    Receptor OSC de producción.
-    Escucha paquetes UDP emitidos por Magic Sand en C++ (puerto 7000).
+    Receptor OSC de producción que escucha paquetes '/sandbox/grid' emitidos
+    por el motor C++ Magic-Sand-Unlimited (puerto 7000 por defecto).
     """
     def __init__(self, ip: str = "127.0.0.1", port: int = 7000, cols: int = 2, rows: int = 2):
         self.cols = cols
@@ -37,8 +21,8 @@ class OSCDataProvider(BaseDataProvider):
         self.lock = threading.Lock()
         self.ip = ip
         self.port = port
-        self.server = None
-        self.thread = None
+        self.server: BlockingOSCUDPServer | None = None
+        self.thread: threading.Thread | None = None
         self._start_server()
 
     def _on_grid_message(self, address: str, *args):
@@ -52,11 +36,11 @@ class OSCDataProvider(BaseDataProvider):
             self.server = BlockingOSCUDPServer((self.ip, self.port), dispatcher)
             self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
             self.thread.start()
-            print(f"[OSCDataProvider] Escuchando datos de Magic Sand en {self.ip}:{self.port}")
+            print(f"[OSCSandInputAdapter] Escuchando alturas del Kinect en {self.ip}:{self.port}")
         except Exception as e:
-            print(f"[OSCDataProvider] Error al iniciar servidor OSC: {e}")
+            print(f"[OSCSandInputAdapter] Error al iniciar receptor OSC en {self.ip}:{self.port}: {e}")
 
-    def set_grid_size(self, cols: int, rows: int):
+    def set_grid_size(self, cols: int, rows: int) -> None:
         with self.lock:
             self.cols = cols
             self.rows = rows
@@ -65,5 +49,11 @@ class OSCDataProvider(BaseDataProvider):
         with self.lock:
             return list(self.heights)
 
-    def reset(self):
+    def reset(self) -> None:
         pass
+
+    def close(self) -> None:
+        if self.server:
+            self.server.shutdown()
+            self.server.server_close()
+            self.server = None

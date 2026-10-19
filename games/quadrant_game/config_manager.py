@@ -89,7 +89,7 @@ class ConfigManager:
     dentro de la carpeta 'configs/'.
     """
     def __init__(self, configs_dir: str | None = None):
-        base_game_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        base_game_dir = os.path.dirname(os.path.abspath(__file__))
         self.configs_dir = configs_dir or os.path.join(base_game_dir, "configs")
         os.makedirs(self.configs_dir, exist_ok=True)
         self.default_file = "default.env"

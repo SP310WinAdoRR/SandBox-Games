@@ -1,10 +1,10 @@
+from __future__ import annotations
 import math
 import random
 import time
 import pygame
 
-from .data_provider import BaseDataProvider
-from .bridge_client import MagicSandBridgeClient
+from core.contracts import ISandInputPort, IProjectionOutputPort, ISandboxGame
 from .metrics import RoundMetric, TherapyMetricsManager
 from .config_manager import (
     ConfigManager,
@@ -22,11 +22,14 @@ def _lerp_color(c1: tuple[int, int, int], c2: tuple[int, int, int], t: float) ->
     )
 
 
-class QuadrantTherapyGame:
+class QuadrantTherapyGame(ISandboxGame):
     """
-    Videojuego de modulación de alturas por cuadrantes para rehabilitación motriz.
-    Integra gestor de configuraciones (.env) con Modo Fácil (categorías) y
-    Modo Avanzado (edición numérica completa) desde la ventana de Telemetría.
+    Caja negra del videojuego de modulación de alturas por cuadrantes.
+    No conoce nada sobre sockets UDP/OSC ni sobre creación de ventanas de Pygame;
+    toda comunicación y renderizado ocurre a través de dependencias inyectadas:
+      - input_port: ISandInputPort
+      - output_port: IProjectionOutputPort
+      - surface: pygame.Surface (en render_inspector / render_projection)
     """
 
     STATE_WELCOME = "WELCOME"
@@ -45,13 +48,13 @@ class QuadrantTherapyGame:
 
     def __init__(
         self,
-        data_provider: BaseDataProvider,
-        bridge: MagicSandBridgeClient = None,
-        config_mgr: ConfigManager = None,
+        input_port: ISandInputPort,
+        output_port: IProjectionOutputPort,
+        config_mgr: ConfigManager | None = None,
         patient_id: str = "PACIENTE_01",
     ):
-        self.provider = data_provider
-        self.bridge = bridge or MagicSandBridgeClient()
+        self.provider = input_port
+        self.bridge = output_port
         self.config_mgr = config_mgr or ConfigManager()
         self.metrics = TherapyMetricsManager(patient_id=patient_id)
 
@@ -89,6 +92,25 @@ class QuadrantTherapyGame:
         self.new_env_buffer: str = "perfil_personalizado"
         self.status_toast_msg: str = ""
         self.status_toast_until: float = 0.0
+
+    @property
+    def title(self) -> str:
+        return "Rehabilitación por Cuadrantes — Consola Clínica y Configuración"
+
+    @property
+    def grid_shape(self) -> tuple[int, int]:
+        return (self.cols, self.rows)
+
+    def get_network_config(self) -> tuple[str, int, int]:
+        cfg = self.config_mgr.config
+        return (cfg.OSC_HOST, cfg.OSC_RX_PORT, cfg.OSC_TX_PORT)
+
+    def can_exit_on_escape(self) -> bool:
+        return not self.saving_new_env and self.editing_field is None
+
+    def shutdown(self) -> None:
+        if self.metrics.session.rounds:
+            self.metrics.export_session()
 
     def show_toast(self, msg: str, duration: float = 3.0):
         self.status_toast_msg = msg
@@ -173,9 +195,9 @@ class QuadrantTherapyGame:
             return 1.0
         return max(0.0, min(1.0, current_h / self.target_threshold))
 
-    def update(self):
+    def update(self, dt: float | None = None) -> None:
         now = time.time()
-        dt = now - self.last_update_time
+        elapsed = dt if dt is not None else (now - self.last_update_time)
         self.last_update_time = now
         cfg = self.config_mgr.config
 
@@ -191,7 +213,7 @@ class QuadrantTherapyGame:
                 self._start_active_phase()
 
         elif self.state == self.STATE_ROUND_ACTIVE:
-            self.time_left -= dt
+            self.time_left -= elapsed
             timer_ratio = max(0.0, self.time_left / self.time_limit)
             self.bridge.send_hud_timer(timer_ratio, alpha=cfg.PIE_TIMER_OPACITY)
 
@@ -288,6 +310,9 @@ class QuadrantTherapyGame:
                 self.show_toast(f"Actualizado: {self.editing_field}")
             self.editing_field = None
             self.editing_buffer = ""
+
+    def handle_key_event(self, event: pygame.event.Event) -> None:
+        self.handle_input(event)
 
     def handle_input(self, event):
         if event.type == pygame.KEYDOWN:
@@ -412,6 +437,9 @@ class QuadrantTherapyGame:
         if self.editing_field:
             self._commit_active_edit()
         return False
+
+    def render_projection(self, surface: pygame.Surface) -> None:
+        self.render(surface, is_emulator=True)
 
     # =========================================================================
     # VENTANA 1: VISTA DE PROYECCIÓN (PACIENTE / CAJA DE ARENA)
