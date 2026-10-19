@@ -1,3 +1,4 @@
+from __future__ import annotations
 import threading
 from abc import ABC, abstractmethod
 from pythonosc.dispatcher import Dispatcher
