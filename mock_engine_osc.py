@@ -59,7 +59,18 @@ class MockCppEngine:
         dispatcher.map("/render/hud/title", self._on_hud_title)
         dispatcher.map("/render/clear", self._on_clear)
 
-        self.server = BlockingOSCUDPServer((self.host, self.rx_port), dispatcher)
+        try:
+            self.server = BlockingOSCUDPServer((self.host, self.rx_port), dispatcher)
+        except OSError as e:
+            if getattr(e, "errno", None) == 98:
+                import sys
+                sys.exit(
+                    f"\n[ERROR] El puerto UDP {self.rx_port} ya está en uso (Address already in use).\n"
+                    f"Esto ocurre si el motor real 'Magic-Sand' (C++) u otra instancia del simulador ya está en ejecución.\n\n"
+                    f"  1. Si tienes Magic-Sand abierto: No necesitas este simulador. Presiona la tecla 'B' en Magic-Sand y ejecuta main.py.\n"
+                    f"  2. Si deseas usar este simulador: Cierra primero la aplicación Magic-Sand para liberar el puerto {self.rx_port}.\n"
+                )
+            raise
         self.server_thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.server_thread.start()
 
