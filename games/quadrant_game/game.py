@@ -24,12 +24,12 @@ def _lerp_color(c1: tuple[int, int, int], c2: tuple[int, int, int], t: float) ->
 
 class QuadrantTherapyGame(ISandboxGame):
     """
-    Caja negra del videojuego de modulación de alturas por cuadrantes.
-    No conoce nada sobre sockets UDP/OSC ni sobre creación de ventanas de Pygame;
-    toda comunicación y renderizado ocurre a través de dependencias inyectadas:
-      - input_port: ISandInputPort
-      - output_port: IProjectionOutputPort
-      - surface: pygame.Surface (en render_inspector / render_projection)
+    Implementación del juego terapéutico de modulación de alturas por cuadrantes.
+    Opera desacoplado de la infraestructura de red y de ventanas gráficas,
+    interactuando mediante puertos y abstracciones inyectadas:
+      - input_port: ISandInputPort (lectura de alturas de la arena)
+      - output_port: IProjectionOutputPort (emisión de comandos gráficos)
+      - surface: pygame.Surface (renderizado de interfaces)
     """
 
     STATE_WELCOME = "WELCOME"
@@ -442,7 +442,7 @@ class QuadrantTherapyGame(ISandboxGame):
         self.render(surface, is_emulator=True)
 
     # =========================================================================
-    # VENTANA 1: VISTA DE PROYECCIÓN (PACIENTE / CAJA DE ARENA)
+    # VISTA DE PROYECCIÓN (SUPERFICIE DE ARENA)
     # =========================================================================
     def render(self, surface: pygame.Surface, is_emulator: bool = True):
         width, height = surface.get_size()
@@ -525,7 +525,7 @@ class QuadrantTherapyGame(ISandboxGame):
         self._draw_superimposed_hud(surface, width, height)
 
     # =========================================================================
-    # VENTANA 2: PANTALLA DE INSPECCIÓN, TELEMETRÍA Y CONFIGURACIÓN (.ENV)
+    # INTERFAZ DE MONITOREO Y CONFIGURACIÓN CLÍNICA
     # =========================================================================
     def render_inspector(self, surface: pygame.Surface, is_emulator: bool = True):
         self.ui_hitboxes.clear()
@@ -583,7 +583,7 @@ class QuadrantTherapyGame(ISandboxGame):
     def _render_monitor_tab(self, surface, w, h, pad, y_cursor, is_emulator, font_sec, font_body, font_mono):
         cfg = self.config_mgr.config
         sec1_title = font_sec.render(
-            f"1. INSPECCIÓN FÍSICA DE CUADRANTES — Perfil: configs/{self.config_mgr.active_file}",
+            f"1. TELEMETRÍA DE CUADRANTES — Perfil: configs/{self.config_mgr.active_file}",
             True,
             (0, 195, 235),
         )
@@ -821,7 +821,7 @@ class QuadrantTherapyGame(ISandboxGame):
         avail_w = body_rect.width - 28
 
         hdr = font_sec.render(
-            "CONFIGURACIONES ESENCIALES POR CATEGORÍA (Haz clic para cambiar entre Baja, Media o Alta):",
+            "PARÁMETROS POR CATEGORÍA (Seleccione el nivel de exigencia deseado):",
             True,
             (0, 200, 240),
         )
@@ -883,7 +883,7 @@ class QuadrantTherapyGame(ISandboxGame):
         avail_w = body_rect.width - 24
 
         hdr = font_sec.render(
-            "MODO AVANZADO: Haz clic en un número para escribir con el teclado (+ Enter) o usa [-] y [+]:",
+            "MODO AVANZADO: Ajuste valores numéricos con [-] / [+] o seleccione el campo para editar:",
             True,
             (255, 205, 90),
         )

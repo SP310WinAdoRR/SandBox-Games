@@ -1,10 +1,10 @@
 """
-Contratos e Interfaces (Puertos) para Inyección de Dependencias.
+Contratos e Interfaces (Puertos) para Inversión de Dependencias.
 
-Todo juego dentro de 'games/<nombre_juego>/' actúa como una caja negra que:
-  1. Lee datos de entrada a través de 'ISandInputPort' (inyectado).
-  2. Emite órdenes de proyección a través de 'IProjectionOutputPort' (inyectado).
-  3. Renderiza su UI sobre objetos 'pygame.Surface' inyectados por el Runner.
+Estructura de desacoplamiento para los módulos dentro de 'games/<nombre_juego>/':
+  1. Lectura de datos de entrada a través de 'ISandInputPort'.
+  2. Emisión de órdenes gráficas y de proyección a través de 'IProjectionOutputPort'.
+  3. Renderizado de interfaz sobre superficies 'pygame.Surface' provistas por el ejecutor.
 """
 from __future__ import annotations
 from abc import ABC, abstractmethod
@@ -13,9 +13,9 @@ import pygame
 
 class ISandInputPort(ABC):
     """
-    Puerto de Entrada (Recepción de Información):
-    Provee al juego las alturas actuales de la arena (en mm) sin que el juego
-    conozca si provienen del Kinect vía UDP/OSC, de un archivo o de un emulador.
+    Puerto de Entrada:
+    Provee las alturas actuales de la arena (en mm), abstrayendo la fuente de datos
+    (Kinect vía UDP/OSC, simulación local o generadores sintéticos).
     """
     @abstractmethod
     def get_heights(self) -> list[float]:
@@ -35,9 +35,9 @@ class ISandInputPort(ABC):
 
 class IProjectionOutputPort(ABC):
     """
-    Puerto de Salida (Transmisión de Información):
-    Permite al juego emitir estados visuales hacia el proyector de la caja de arena
-    sin acoplarse a sockets UDP ni al protocolo OSC.
+    Puerto de Salida:
+    Permite al juego emitir estados visuales hacia el proyector de la caja de arena,
+    desacoplado de la implementación de red o del protocolo de transmisión.
     """
     @abstractmethod
     def reconfigure_endpoint(self, host: str, port: int) -> None:
@@ -96,9 +96,9 @@ class IProjectionOutputPort(ABC):
 
 class ISandboxGame(ABC):
     """
-    Contrato de Caja Negra para cualquier videojuego dentro de 'games/'.
-    El Runner del sistema inyecta los puertos de entrada/salida y las superficies
-    de Pygame en cada ciclo.
+    Interfaz base para los módulos de juego dentro de 'games/'.
+    Define los métodos requeridos para la actualización lógica, procesamiento
+    de eventos y renderizado de interfaces.
     """
     @property
     @abstractmethod

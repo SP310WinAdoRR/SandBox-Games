@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """
-Simulador de Producción del Motor C++ (Magic-Sand-Unlimited / CRemoteGameController).
+Simulador de comunicación OSC del motor de captura y proyección (Magic Sand C++).
 
-Emula exactamente los dos sockets UDP/OSC del motor C++:
-  - TX -> 127.0.0.1:7000 : Envía alturas de la arena a 30 Hz en '/sandbox/grid' (,ffff)
-  - RX <- 127.0.0.1:7001 : Escucha comandos de proyección desde SandBox-Games ('/render/...')
+Emula los dos canales UDP/OSC del motor de captura y renderizado:
+  - TX -> 127.0.0.1:7000 : Transmite alturas de la arena a 30 Hz en '/sandbox/grid'.
+  - RX <- 127.0.0.1:7001 : Escucha comandos visuales emitidos por los juegos ('/render/...').
 
 Modos de uso:
-  1. Simulación en vivo con Autopiloto (juega solo respondiendo a los colores proyectados):
-     Terminal 1: ./venv/bin/python main.py --live
-     Terminal 2: ./venv/bin/python mock_engine_osc.py --autopilot
+  1. Simulación interactiva con agente automático:
+     Terminal 1: ./.venv/bin/python main.py
+     Terminal 2: ./.venv/bin/python mock_engine_osc.py --autopilot
 
-  2. Prueba automática de integración (Handshake bidireccional sin abrir ventanas):
-     ./venv/bin/python mock_engine_osc.py --self-test
+  2. Prueba de integración (verificación de comunicación bidireccional sin interfaz gráfica):
+     ./.venv/bin/python mock_engine_osc.py --self-test
 """
 from __future__ import annotations
 import argparse
@@ -125,11 +125,10 @@ class MockCppEngine:
 
     def step_autopilot(self, dt: float):
         """
-        Simula un paciente/operador moviendo la arena física en respuesta
-        a lo que el juego proyecta por el puerto 7001:
-          - Si el título pide "Aplane la arena" o "Mueva la arena": ajusta las alturas.
-          - Si un cuadrante tiene interior ROJO (ir > 200, ig < 100): acumula arena (+mm).
-          - Si un cuadrante tiene interior VERDE (ig > 160, ir < 100): excava arena (-mm).
+        Simula la modificación de alturas en la arena en respuesta a los comandos de proyección:
+          - Fase de nivelación: ajusta las alturas progresivamente hacia 0.0 mm.
+          - Cuadrante objetivo con indicación de elevar (rojo): incrementa la altura (+mm).
+          - Cuadrante objetivo con indicación de excavar (verde): reduce la altura (-mm).
         """
         with self.lock:
             title_lower = self.current_title.lower()
@@ -192,10 +191,10 @@ def encode_cpp_osc_grid(heights: list[float]) -> bytes:
 
 def run_self_test() -> int:
     """
-    Ejecuta una prueba de integración completa en local verificando:
-      1. Paquete binario crudo idéntico al C++ (sendGridElevationsOSC) -> OSCSandInputAdapter
-      2. OSCProjectionOutputAdapter -> Servidor receptor del Motor (:17001)
-    (Usa puertos 17000/17001 para no colisionar si ya tienes main.py abierto).
+    Ejecuta una prueba de integración de red verificando:
+      1. Paquete binario emitido hacia el adaptador de entrada -> OSCSandInputAdapter
+      2. Comandos de proyección emitidos -> Servidor receptor del simulador (:17001)
+    (Utiliza los puertos 17000 y 17001 para evitar colisiones con instancias en ejecución).
     """
     import os
     import socket
@@ -265,12 +264,12 @@ def run_self_test() -> int:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Simulador del Motor C++ Magic-Sand-Unlimited (UDP/OSC)")
-    parser.add_argument("--host", type=str, default="127.0.0.1", help="IP destino/escucha (default: 127.0.0.1)")
-    parser.add_argument("--tx-port", type=int, default=7000, help="Puerto hacia donde envía alturas (default: 7000)")
-    parser.add_argument("--rx-port", type=int, default=7001, help="Puerto donde recibe comandos de render (default: 7001)")
-    parser.add_argument("--autopilot", action="store_true", help="Mueve la arena automáticamente según los objetivos recibidos en :7001")
-    parser.add_argument("--self-test", action="store_true", help="Ejecuta prueba automática de handshake bidireccional y termina")
+    parser = argparse.ArgumentParser(description="Simulador del motor Magic Sand C++ (protocolo OSC/UDP)")
+    parser.add_argument("--host", type=str, default="127.0.0.1", help="Dirección IP de escucha y destino (por defecto: 127.0.0.1)")
+    parser.add_argument("--tx-port", type=int, default=7000, help="Puerto de destino para el envío de alturas (por defecto: 7000)")
+    parser.add_argument("--rx-port", type=int, default=7001, help="Puerto de escucha para comandos de proyección (por defecto: 7001)")
+    parser.add_argument("--autopilot", action="store_true", help="Ajusta automáticamente las alturas según los objetivos proyectados")
+    parser.add_argument("--self-test", action="store_true", help="Ejecuta la prueba automática de comunicación bidireccional y finaliza")
     args = parser.parse_args()
 
     if args.self_test:
@@ -280,11 +279,11 @@ def main():
     engine.start_rx_server()
 
     print("==========================================================================")
-    print("  SIMULADOR DE MOTOR C++ (CRemoteGameController) ACTIVO")
-    print(f"  - Enviando '/sandbox/grid' (30 Hz) -> {args.host}:{args.tx_port}")
-    print(f"  - Escuchando '/render/...'         <- {args.host}:{args.rx_port}")
-    print(f"  - Modo Autopiloto de Arena         : {'ACTIVADO' if args.autopilot else 'DESACTIVADO (Onda senoidal suave)'}")
-    print("  Ejecuta en otra terminal: ./.venv/bin/python main.py --live")
+    print("  SIMULADOR DE MOTOR DE CAPTURA Y PROYECCIÓN (OSC/UDP) ACTIVO")
+    print(f"  - Transmisión '/sandbox/grid' (30 Hz) -> {args.host}:{args.tx_port}")
+    print(f"  - Recepción '/render/...'             <- {args.host}:{args.rx_port}")
+    print(f"  - Modo Autopiloto                     : {'ACTIVADO' if args.autopilot else 'DESACTIVADO (Señal senoidal de prueba)'}")
+    print("  Ejecución del juego en otra terminal: ./.venv/bin/python main.py")
     print("==========================================================================")
 
     dt = 1.0 / 30.0
@@ -311,7 +310,7 @@ def main():
 
             if now - last_log >= 1.0:
                 connected = (now - engine.last_rx_time) < 2.5
-                status = "CONECTADO" if connected else "ESPERANDO JUEGO (--live)"
+                status = "CONECTADO" if connected else "ESPERANDO CONEXIÓN"
                 h_str = ", ".join(f"Q{i+1}:{h:+.1f}mm" for i, h in enumerate(engine.heights))
                 print(
                     f"[{status}] TX:{engine.tx_packet_count} RX:{engine.rx_packet_count} | "

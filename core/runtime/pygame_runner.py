@@ -1,7 +1,7 @@
 """
-Motor de Ejecución, Gestión de Ventanas Pygame e Inyector de Dependencias.
+Módulo de ejecución y gestión de ventanas en Pygame.
 
-Desacopla por completo la inicialización de SDL2/Pygame, el bucle de eventos y
+Desacopla la inicialización de SDL2/Pygame, el bucle de eventos y
 las ventanas del sistema operativo respecto de la lógica interna de cada juego.
 """
 from __future__ import annotations
@@ -56,8 +56,8 @@ def load_game_plugin(
 
 class PygameApplicationRunner:
     """
-    Orquesta el ciclo de vida de Pygame e inyecta las superficies de renderizado
-    y los eventos a una instancia de 'ISandboxGame' (caja negra).
+    Orquesta el ciclo de vida de la aplicación en Pygame, administrando eventos
+    y superficies de renderizado para instancias de 'ISandboxGame'.
     """
     def __init__(
         self,
@@ -100,10 +100,10 @@ class PygameApplicationRunner:
                     elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                         self.game.handle_inspector_click(event.pos[0], event.pos[1])
 
-                # Ejecutar un paso de la caja negra del juego
+                # Actualizar el estado lógico del juego
                 self.game.update(dt)
 
-                # Inyectar la superficie de Pygame al juego para su renderizado
+                # Renderizar la interfaz sobre la superficie activa
                 surf = window.get_surface()
                 self.game.render_inspector(surf, is_emulator=False)
                 window.flip()

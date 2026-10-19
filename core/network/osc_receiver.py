@@ -1,6 +1,6 @@
 """
 Adaptador de Recepción de Información (UDP/OSC RX).
-Implementa ISandInputPort para ser inyectado en cualquier juego.
+Implementa ISandInputPort para proveer datos de altura de la arena.
 """
 from __future__ import annotations
 import threading
@@ -11,8 +11,8 @@ from core.contracts import ISandInputPort
 
 class OSCSandInputAdapter(ISandInputPort):
     """
-    Receptor OSC de producción que escucha paquetes '/sandbox/grid' emitidos
-    por el motor C++ Magic-Sand-Unlimited (puerto 7000 por defecto).
+    Receptor OSC que procesa los paquetes '/sandbox/grid' emitidos
+    por el motor Magic Sand C++ (puerto 7000 por defecto).
     """
     def __init__(self, ip: str = "127.0.0.1", port: int = 7000, cols: int = 2, rows: int = 2):
         self.cols = cols
@@ -36,7 +36,7 @@ class OSCSandInputAdapter(ISandInputPort):
             self.server = BlockingOSCUDPServer((self.ip, self.port), dispatcher)
             self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
             self.thread.start()
-            print(f"[OSCSandInputAdapter] Escuchando alturas del Kinect en {self.ip}:{self.port}")
+            print(f"[OSCSandInputAdapter] Receptor OSC iniciado en {self.ip}:{self.port}")
         except Exception as e:
             print(f"[OSCSandInputAdapter] Error al iniciar receptor OSC en {self.ip}:{self.port}: {e}")
 

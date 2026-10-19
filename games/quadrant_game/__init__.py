@@ -1,8 +1,7 @@
 """
-Módulo Caja Negra del Juego de Rehabilitación por Cuadrantes ('quadrant_game').
+Módulo del juego de rehabilitación por cuadrantes ('quadrant_game').
 
-Recibe sus dependencias (entrada de alturas y salida de proyección) por
-Inyección de Dependencias a través de 'create_game(...)'.
+Recibe sus dependencias de entrada y salida a través de la función de fábrica 'create_game(...)'.
 """
 from __future__ import annotations
 import os
@@ -18,9 +17,9 @@ def create_game(
     env_file: str = "default.env",
 ) -> ISandboxGame:
     """
-    Fábrica de Inyección de Dependencias del juego de cuadrantes.
-    Configura los puertos de red según el perfil .env del juego y retorna
-    la instancia de 'QuadrantTherapyGame' lista para ser ejecutada por el Runner.
+    Fábrica del juego de cuadrantes.
+    Inicializa los parámetros de configuración y adapta los puertos de red
+    según el perfil .env especificado, retornando una instancia de 'QuadrantTherapyGame'.
     """
     game_dir = os.path.dirname(os.path.abspath(__file__))
     config_mgr = ConfigManager(configs_dir=os.path.join(game_dir, "configs"))

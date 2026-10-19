@@ -1,6 +1,6 @@
 """
 Adaptador de Transmisión de Información (UDP/OSC TX).
-Implementa IProjectionOutputPort para ser inyectado en cualquier juego.
+Implementa IProjectionOutputPort para transmitir comandos gráficos.
 """
 from __future__ import annotations
 from pythonosc.udp_client import SimpleUDPClient
@@ -9,8 +9,8 @@ from core.contracts import IProjectionOutputPort
 
 class OSCProjectionOutputAdapter(IProjectionOutputPort):
     """
-    Cliente UDP/OSC que transmite instrucciones de renderizado hacia el motor C++
-    Magic-Sand-Unlimited (puerto 7001 por defecto).
+    Cliente UDP/OSC que transmite instrucciones de renderizado hacia el proyector
+    a través del motor Magic Sand C++ (puerto 7001 por defecto).
     """
     def __init__(self, host: str = "127.0.0.1", port: int = 7001):
         self.host = host

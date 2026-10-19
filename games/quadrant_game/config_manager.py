@@ -5,10 +5,10 @@ from dataclasses import dataclass, fields
 @dataclass
 class GameConfig:
     """
-    Almacena todas las variables de configuración del juego terapéutico,
-    tanto las categorías esenciales (Modo Fácil) como los números exactos (Modo Avanzado).
+    Almacena los parámetros de configuración del juego terapéutico,
+    incluyendo categorías predefinidas y variables numéricas avanzadas.
     """
-    # Categorías Modo Fácil ("BAJA", "MEDIA", "ALTA", etc.)
+    # Categorías de configuración simplificada ("BAJA", "MEDIA", "ALTA", etc.)
     FORCE_CATEGORY: str = "MEDIA"       # BAJA | MEDIA | ALTA
     TIME_CATEGORY: str = "MEDIA"        # BAJA | MEDIA | ALTA
     GRID_CATEGORY: str = "MEDIA"        # BAJA | MEDIA | ALTA
@@ -47,10 +47,10 @@ ADVANCED_FIELDS_META = [
     ("INITIAL_ROWS", "Filas Iniciales", int, 1, 1, 8),
     ("MAX_GRID_STAGE", "Etapa Máx. Cuadrícula (1-3)", int, 1, 1, 3),
     ("WIN_PAUSE_SEC", "Pausa al Superar Ronda (s)", float, 0.2, 0.2, 10.0),
-    ("PIE_TIMER_OPACITY", "Opacidad Torta Tiempo (20-220)", int, 10, 20, 220),
+    ("PIE_TIMER_OPACITY", "Opacidad Cronómetro (20-220)", int, 10, 20, 220),
     ("EMULATOR_RATE_MM_S", "Velocidad Ratón Emulador (mm/s)", float, 5.0, 10.0, 200.0),
-    ("OSC_RX_PORT", "Puerto UDP Recepción Kinect", int, 1, 1024, 65535),
-    ("OSC_TX_PORT", "Puerto UDP Envío Proyector", int, 1, 1024, 65535),
+    ("OSC_RX_PORT", "Puerto UDP Recepción Alturas", int, 1, 1024, 65535),
+    ("OSC_TX_PORT", "Puerto UDP Envío Proyección", int, 1, 1024, 65535),
 ]
 
 # Definición de las categorías del Modo Fácil

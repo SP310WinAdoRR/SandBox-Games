@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Arnés de Testeo y Emulación con Ratón por Inyección de Dependencias.
+Módulo de pruebas y emulación interactiva mediante ratón.
 
-Inyecta 'EmulatorSandInputAdapter' (en lugar de OSC) a cualquier juego ubicado
-en 'games/<game_name>', sin modificar ni una sola línea del juego caja negra.
+Permite ejecutar los juegos desacoplados del hardware físico mediante la inyección
+de 'EmulatorSandInputAdapter' en lugar de la conexión OSC.
 """
 from __future__ import annotations
 import argparse
@@ -26,7 +26,7 @@ from core.runtime.pygame_runner import (
 
 class EmulatorSandInputAdapter(ISandInputPort):
     """
-    Implementación de 'ISandInputPort' controlada por el ratón para pruebas en casa.
+    Implementación de 'ISandInputPort' controlada por el ratón para pruebas locales y desarrollo.
     """
     def __init__(self, cols: int = 2, rows: int = 2):
         self.cols = cols
@@ -53,7 +53,7 @@ def main() -> None:
     games_root = os.path.join(ROOT_DIR, "games")
     available = list_available_games(games_root)
 
-    parser = argparse.ArgumentParser(description="Emulador de Testeo con Ratón (Inyección de Dependencias)")
+    parser = argparse.ArgumentParser(description="Emulador interactivo de pruebas mediante ratón")
     parser.add_argument("--game", type=str, default="quadrant_game", choices=available if available else ["quadrant_game"])
     parser.add_argument("--patient", type=str, default="TEST_EMULADOR")
     parser.add_argument("--env", type=str, default="default.env")
@@ -63,7 +63,7 @@ def main() -> None:
     parser.add_argument("--proj-height", type=int, default=720)
     args = parser.parse_args()
 
-    # Inyectamos el adaptador de ratón como ISandInputPort y el adaptador OSC como IProjectionOutputPort
+    # Inyección de dependencias para emulación local
     input_port = EmulatorSandInputAdapter()
     output_port = OSCProjectionOutputAdapter()
 
