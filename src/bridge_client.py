@@ -48,10 +48,10 @@ class MagicSandBridgeClient:
                 ],
             )
 
-    def send_hud_timer(self, progress: float, r: int = 255, g: int = 255, b: int = 255):
-        """Actualiza la torta de tiempo central proyectada (valor entre 0.0 y 1.0)."""
+    def send_hud_timer(self, progress: float, r: int = 255, g: int = 255, b: int = 255, alpha: int = 75):
+        """Actualiza la torta de tiempo central proyectada (valor entre 0.0 y 1.0) y su opacidad."""
         if self.client:
-            self.client.send_message("/render/hud/timer", [float(progress), int(r), int(g), int(b)])
+            self.client.send_message("/render/hud/timer", [float(progress), int(r), int(g), int(b), int(alpha)])
 
     def send_hud_stats(self, round_num: int, score: int):
         """Actualiza el nivel y puntaje superpuestos sobre el mapa."""

@@ -193,7 +193,7 @@ class QuadrantTherapyGame:
         elif self.state == self.STATE_ROUND_ACTIVE:
             self.time_left -= dt
             timer_ratio = max(0.0, self.time_left / self.time_limit)
-            self.bridge.send_hud_timer(timer_ratio)
+            self.bridge.send_hud_timer(timer_ratio, alpha=cfg.PIE_TIMER_ALPHA)
 
             progress = self._get_target_progress(current_h)
             if progress >= 1.0:
