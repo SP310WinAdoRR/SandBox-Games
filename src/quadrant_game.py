@@ -493,7 +493,7 @@ class QuadrantTherapyGame:
             surface.blit(font_mono.render(row_txt, True, row_col), (hist_box.x + 12, ry))
 
         # --- PIE DE CONTROLES DEL OPERADOR ---
-        ctrl_txt = "[TAB]: Vista Monitor/Proyector | [ESPACIO]: Iniciar | [R]: Aplanar | [G]: Exportar CSV"
+        ctrl_txt = "[ESPACIO]: Iniciar / Saltar Nivelación  |  [R]: Aplanar Arena  |  [G]: Exportar CSV/JSON  |  [ESC]: Salir"
         ctrl_s = font_body.render(ctrl_txt, True, (145, 165, 190))
         surface.blit(ctrl_s, (w // 2 - ctrl_s.get_width() // 2, h - 22))
 
