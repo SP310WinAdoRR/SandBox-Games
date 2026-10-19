@@ -14,11 +14,14 @@ class GameConfig:
     GRID_CATEGORY: str = "MEDIA"        # BAJA | MEDIA | ALTA
     ACTION_CATEGORY: str = "AMBOS"      # PONER | SACAR | AMBOS
     TOLERANCE_CATEGORY: str = "MEDIA"   # BAJA | MEDIA | ALTA
+    BIMANUAL_CATEGORY: str = "MIXTO"    # UNIMANUAL | MIXTO | BIMANUAL
 
     # Variables numéricas específicas (Modo Avanzado)
     INITIAL_COLS: int = 2
     INITIAL_ROWS: int = 2
     MAX_GRID_STAGE: int = 3
+    MAX_SIMULTANEOUS_TARGETS: int = 2
+    HOLD_TIME_SEC: float = 0.5
     BASE_TIME_LIMIT_SEC: float = 15.0
     MIN_TIME_LIMIT_SEC: float = 7.0
     TIME_DECAY_PER_ROUND: float = 0.45
@@ -39,16 +42,17 @@ ADVANCED_FIELDS_META = [
     ("BASE_TIME_LIMIT_SEC", "Tiempo Base por Ronda (s)", float, 1.0, 3.0, 120.0),
     ("MIN_TIME_LIMIT_SEC", "Tiempo Mínimo por Ronda (s)", float, 0.5, 2.0, 60.0),
     ("TIME_DECAY_PER_ROUND", "Reducción Tiempo / Nivel (s)", float, 0.1, 0.0, 5.0),
+    ("HOLD_TIME_SEC", "Tiempo Estabilidad Meta (s)", float, 0.1, 0.0, 5.0),
     ("ELEVATE_THRESHOLD_MM", "Umbral Poner Arena (+mm)", float, 2.0, 5.0, 100.0),
     ("DIG_THRESHOLD_MM", "Umbral Sacar Arena (-mm)", float, 2.0, -100.0, -5.0),
     ("THRESHOLD_STEP_PER_ROUND_MM", "Aumento Umbral / Nivel (mm)", float, 0.5, 0.0, 15.0),
     ("FLAT_TOLERANCE_MM", "Tolerancia Nivelación (±mm)", float, 1.0, 2.0, 30.0),
+    ("MAX_SIMULTANEOUS_TARGETS", "Metas Simultáneas Máx (1-4)", int, 1, 1, 4),
     ("INITIAL_COLS", "Columnas Iniciales", int, 1, 1, 8),
     ("INITIAL_ROWS", "Filas Iniciales", int, 1, 1, 8),
     ("MAX_GRID_STAGE", "Etapa Máx. Cuadrícula (1-3)", int, 1, 1, 3),
     ("WIN_PAUSE_SEC", "Pausa al Superar Ronda (s)", float, 0.2, 0.2, 10.0),
     ("PIE_TIMER_OPACITY", "Opacidad Cronómetro (20-220)", int, 10, 20, 220),
-    ("EMULATOR_RATE_MM_S", "Velocidad Ratón Emulador (mm/s)", float, 5.0, 10.0, 200.0),
     ("OSC_RX_PORT", "Puerto UDP Recepción Alturas", int, 1, 1024, 65535),
     ("OSC_TX_PORT", "Puerto UDP Envío Proyección", int, 1, 1024, 65535),
 ]
@@ -66,6 +70,11 @@ EASY_CATEGORIES_META = [
         [("BAJA", "Baja (22s)"), ("MEDIA", "Media (15s)"), ("ALTA", "Alta (10s)")],
     ),
     (
+        "BIMANUAL_CATEGORY",
+        "Coordinación (Metas Simultáneas)",
+        [("UNIMANUAL", "Unimanual (1)"), ("MIXTO", "Progresivo (1->2)"), ("BIMANUAL", "Bimanual (2)")],
+    ),
+    (
         "GRID_CATEGORY",
         "Complejidad de Cuadrícula",
         [("BAJA", "Baja (Fija 2x2)"), ("MEDIA", "Media (4->8->16)"), ("ALTA", "Alta (Fija 4x4)")],
@@ -77,8 +86,8 @@ EASY_CATEGORIES_META = [
     ),
     (
         "TOLERANCE_CATEGORY",
-        "Exigencia de Nivelación",
-        [("BAJA", "Baja (±12mm)"), ("MEDIA", "Media (±7mm)"), ("ALTA", "Alta (±4mm)")],
+        "Estabilidad y Nivelación",
+        [("BAJA", "Baja (±12mm/0.2s)"), ("MEDIA", "Media (±7mm/0.5s)"), ("ALTA", "Alta (±4mm/1.0s)")],
     ),
 ]
 
@@ -131,9 +140,9 @@ class ConfigManager:
                 if k in field_types:
                     ftype = field_types[k]
                     try:
-                        if ftype is int:
+                        if ftype in (int, "int"):
                             setattr(new_cfg, k, int(float(v)))
-                        elif ftype is float:
+                        elif ftype in (float, "float"):
                             setattr(new_cfg, k, float(v))
                         else:
                             setattr(new_cfg, k, str(v))
@@ -158,6 +167,7 @@ class ConfigManager:
             "# --- CATEGORÍAS MODO FÁCIL ---",
             f"FORCE_CATEGORY={self.config.FORCE_CATEGORY}",
             f"TIME_CATEGORY={self.config.TIME_CATEGORY}",
+            f"BIMANUAL_CATEGORY={self.config.BIMANUAL_CATEGORY}",
             f"GRID_CATEGORY={self.config.GRID_CATEGORY}",
             f"ACTION_CATEGORY={self.config.ACTION_CATEGORY}",
             f"TOLERANCE_CATEGORY={self.config.TOLERANCE_CATEGORY}",
@@ -166,6 +176,8 @@ class ConfigManager:
             f"INITIAL_COLS={self.config.INITIAL_COLS}",
             f"INITIAL_ROWS={self.config.INITIAL_ROWS}",
             f"MAX_GRID_STAGE={self.config.MAX_GRID_STAGE}",
+            f"MAX_SIMULTANEOUS_TARGETS={self.config.MAX_SIMULTANEOUS_TARGETS}",
+            f"HOLD_TIME_SEC={self.config.HOLD_TIME_SEC:.2f}",
             f"BASE_TIME_LIMIT_SEC={self.config.BASE_TIME_LIMIT_SEC:.2f}",
             f"MIN_TIME_LIMIT_SEC={self.config.MIN_TIME_LIMIT_SEC:.2f}",
             f"TIME_DECAY_PER_ROUND={self.config.TIME_DECAY_PER_ROUND:.2f}",
@@ -231,6 +243,14 @@ class ConfigManager:
                 self.config.MIN_TIME_LIMIT_SEC = 5.0
                 self.config.TIME_DECAY_PER_ROUND = 0.65
 
+        elif category_key == "BIMANUAL_CATEGORY":
+            if value == "UNIMANUAL":
+                self.config.MAX_SIMULTANEOUS_TARGETS = 1
+            elif value == "MIXTO":
+                self.config.MAX_SIMULTANEOUS_TARGETS = 2
+            elif value == "BIMANUAL":
+                self.config.MAX_SIMULTANEOUS_TARGETS = 2
+
         elif category_key == "GRID_CATEGORY":
             if value == "BAJA":
                 self.config.INITIAL_COLS = 2
@@ -248,10 +268,13 @@ class ConfigManager:
         elif category_key == "TOLERANCE_CATEGORY":
             if value == "BAJA":
                 self.config.FLAT_TOLERANCE_MM = 12.0
+                self.config.HOLD_TIME_SEC = 0.2
             elif value == "MEDIA":
                 self.config.FLAT_TOLERANCE_MM = 7.0
+                self.config.HOLD_TIME_SEC = 0.5
             elif value == "ALTA":
                 self.config.FLAT_TOLERANCE_MM = 4.0
+                self.config.HOLD_TIME_SEC = 1.0
 
     def set_numeric_field(self, field_name: str, raw_val: str) -> bool:
         """Actualiza un campo numérico específico validando sus límites."""

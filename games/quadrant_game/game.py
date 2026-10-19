@@ -68,6 +68,8 @@ class QuadrantTherapyGame(ISandboxGame):
         self.target_quadrant = 0
         self.target_action = "ELEVATE"   # "ELEVATE" (Rojo: poner arena) o "DIG" (Verde: sacar arena)
         self.target_threshold = 32.0     # mm
+        self.active_targets: dict[int, tuple[str, float]] = {}  # {cell_idx: (action, threshold_mm)}
+        self.hold_elapsed = 0.0          # segundos acumulados sosteniendo la meta (estabilidad anti-falsos positivos)
         self.time_limit = 15.0           # segundos
         self.time_left = 15.0
         self.round_start_time = 0.0
@@ -116,6 +118,19 @@ class QuadrantTherapyGame(ISandboxGame):
         self.status_toast_msg = msg
         self.status_toast_until = time.time() + duration
 
+    def _compute_action_and_threshold(self, round_num: int) -> tuple[str, float]:
+        cfg = self.config_mgr.config
+        if cfg.ACTION_CATEGORY == "PONER":
+            act = "ELEVATE"
+        elif cfg.ACTION_CATEGORY == "SACAR":
+            act = "DIG"
+        else:
+            act = "ELEVATE" if round_num <= 2 else random.choice(["ELEVATE", "DIG"])
+
+        extra_mm = max(0, round_num - 1) * cfg.THRESHOLD_STEP_PER_ROUND_MM
+        thresh = (cfg.ELEVATE_THRESHOLD_MM + extra_mm) if act == "ELEVATE" else (cfg.DIG_THRESHOLD_MM - extra_mm)
+        return act, thresh
+
     def apply_live_config(self):
         """Aplica inmediatamente los cambios de configuración al estado actual."""
         cfg = self.config_mgr.config
@@ -125,6 +140,33 @@ class QuadrantTherapyGame(ISandboxGame):
                 self.rows = cfg.INITIAL_ROWS
                 self.provider.set_grid_size(self.cols, self.rows)
                 self.bridge.send_grid_setup(self.cols, self.rows)
+        elif self.state in (self.STATE_PREPARE_FLAT, self.STATE_ROUND_ACTIVE):
+            extra_mm = max(0, self.round_number - 1) * cfg.THRESHOLD_STEP_PER_ROUND_MM
+            updated_targets: dict[int, tuple[str, float]] = {}
+            for q_idx, (act, _) in self.active_targets.items():
+                if cfg.ACTION_CATEGORY == "PONER":
+                    act = "ELEVATE"
+                elif cfg.ACTION_CATEGORY == "SACAR":
+                    act = "DIG"
+                new_th = (cfg.ELEVATE_THRESHOLD_MM + extra_mm) if act == "ELEVATE" else (cfg.DIG_THRESHOLD_MM - extra_mm)
+                updated_targets[q_idx] = (act, new_th)
+            if updated_targets:
+                self.active_targets = updated_targets
+                primary_q = next(iter(self.active_targets))
+                self.target_quadrant = primary_q
+                self.target_action, self.target_threshold = self.active_targets[primary_q]
+
+            new_limit = max(
+                cfg.MIN_TIME_LIMIT_SEC,
+                cfg.BASE_TIME_LIMIT_SEC - (max(0, self.round_number - 1) * cfg.TIME_DECAY_PER_ROUND),
+            )
+            if self.state == self.STATE_PREPARE_FLAT:
+                self.time_limit = new_limit
+                self.time_left = new_limit
+            else:
+                ratio = max(0.05, min(1.0, self.time_left / max(0.1, self.time_limit)))
+                self.time_limit = new_limit
+                self.time_left = new_limit * ratio
 
     def start_new_game(self):
         cfg = self.config_mgr.config
@@ -138,6 +180,7 @@ class QuadrantTherapyGame(ISandboxGame):
     def next_round(self):
         cfg = self.config_mgr.config
         self.round_number += 1
+        self.hold_elapsed = 0.0
 
         # Escalado de cuadrícula según MAX_GRID_STAGE e INITIAL_COLS/ROWS
         if cfg.MAX_GRID_STAGE <= 1 or self.round_number <= 4:
@@ -153,30 +196,30 @@ class QuadrantTherapyGame(ISandboxGame):
 
         num_cells = self.cols * self.rows
 
-        # Selección de acción según ACTION_CATEGORY
-        if cfg.ACTION_CATEGORY == "PONER":
-            self.target_action = "ELEVATE"
-        elif cfg.ACTION_CATEGORY == "SACAR":
-            self.target_action = "DIG"
+        # Determinar cuántos cuadrantes simultáneos se activarán (coordinación unimanual vs bimanual)
+        max_targets = max(1, min(num_cells, cfg.MAX_SIMULTANEOUS_TARGETS))
+        if cfg.BIMANUAL_CATEGORY == "UNIMANUAL" or max_targets == 1:
+            target_count = 1
+        elif cfg.BIMANUAL_CATEGORY == "BIMANUAL":
+            target_count = max_targets
         else:
-            if self.round_number <= 2:
-                self.target_action = "ELEVATE"
-            else:
-                self.target_action = random.choice(["ELEVATE", "DIG"])
+            # MIXTO: rondas iniciales unimanuales, luego alterna con bimanual
+            target_count = 1 if self.round_number <= 2 else random.randint(1, max_targets)
 
-        # Umbral de altura y tiempo límite gobernados por la configuración (.env)
-        extra_mm = (self.round_number - 1) * cfg.THRESHOLD_STEP_PER_ROUND_MM
-        if self.target_action == "ELEVATE":
-            self.target_threshold = cfg.ELEVATE_THRESHOLD_MM + extra_mm
-        else:
-            self.target_threshold = cfg.DIG_THRESHOLD_MM - extra_mm
+        chosen_cells = random.sample(range(num_cells), k=target_count)
+        self.active_targets = {}
+        for q_idx in chosen_cells:
+            self.active_targets[q_idx] = self._compute_action_and_threshold(self.round_number)
+
+        # Mantener compatibilidad con los atributos de objetivo primario
+        self.target_quadrant = chosen_cells[0]
+        self.target_action, self.target_threshold = self.active_targets[self.target_quadrant]
 
         self.time_limit = max(
             cfg.MIN_TIME_LIMIT_SEC,
             cfg.BASE_TIME_LIMIT_SEC - ((self.round_number - 1) * cfg.TIME_DECAY_PER_ROUND),
         )
 
-        self.target_quadrant = random.randint(0, num_cells - 1)
         self.state = self.STATE_PREPARE_FLAT
 
         self.bridge.send_grid_setup(self.cols, self.rows)
@@ -186,14 +229,16 @@ class QuadrantTherapyGame(ISandboxGame):
     def _start_active_phase(self):
         self.state = self.STATE_ROUND_ACTIVE
         self.time_left = self.time_limit
+        self.hold_elapsed = 0.0
         self.round_start_time = time.time()
         self.bridge.send_hud_title("")
         self.bridge.send_hud_stats(self.round_number, self.score)
 
-    def _get_target_progress(self, current_h: float) -> float:
-        if abs(self.target_threshold) < 1e-5:
+    def _get_target_progress(self, current_h: float, threshold_mm: float | None = None) -> float:
+        target_th = self.target_threshold if threshold_mm is None else threshold_mm
+        if abs(target_th) < 1e-5:
             return 1.0
-        return max(0.0, min(1.0, current_h / self.target_threshold))
+        return max(0.0, min(1.0, current_h / target_th))
 
     def update(self, dt: float | None = None) -> None:
         now = time.time()
@@ -205,7 +250,8 @@ class QuadrantTherapyGame(ISandboxGame):
         if not heights or self.target_quadrant >= len(heights):
             return
 
-        current_h = heights[self.target_quadrant]
+        if not self.active_targets:
+            self.active_targets = {self.target_quadrant: (self.target_action, self.target_threshold)}
 
         if self.state == self.STATE_PREPARE_FLAT:
             is_flat = all(abs(h) < cfg.FLAT_TOLERANCE_MM for h in heights)
@@ -217,41 +263,51 @@ class QuadrantTherapyGame(ISandboxGame):
             timer_ratio = max(0.0, self.time_left / self.time_limit)
             self.bridge.send_hud_timer(timer_ratio, alpha=cfg.PIE_TIMER_OPACITY)
 
-            progress = self._get_target_progress(current_h)
-            if progress >= 1.0:
-                time_taken = self.time_limit - self.time_left
-                points = int(100 + (self.time_left * 20))
-                self.score += points
-                self.round_win_time = now
-                self.state = self.STATE_ROUND_WON
+            all_reached = all(
+                q_idx < len(heights) and self._get_target_progress(heights[q_idx], th_mm) >= 1.0
+                for q_idx, (_, th_mm) in self.active_targets.items()
+            )
 
-                self.metrics.record_round(RoundMetric(
-                    round_number=self.round_number,
-                    target_quadrant=self.target_quadrant,
-                    target_action=self.target_action,
-                    target_threshold_mm=self.target_threshold,
-                    final_height_mm=current_h,
-                    time_limit_sec=self.time_limit,
-                    time_taken_sec=time_taken,
-                    success=True,
-                    score_awarded=points
-                ))
-                self.bridge.send_hud_stats(self.round_number, self.score)
-                return
+            if all_reached:
+                self.hold_elapsed += elapsed
+                if self.hold_elapsed >= cfg.HOLD_TIME_SEC:
+                    time_taken = self.time_limit - self.time_left
+                    points = int((100 + (self.time_left * 20)) * len(self.active_targets))
+                    self.score += points
+                    self.round_win_time = now
+                    self.state = self.STATE_ROUND_WON
+
+                    for q_idx, (act, th_mm) in self.active_targets.items():
+                        self.metrics.record_round(RoundMetric(
+                            round_number=self.round_number,
+                            target_quadrant=q_idx,
+                            target_action=act,
+                            target_threshold_mm=th_mm,
+                            final_height_mm=heights[q_idx] if q_idx < len(heights) else 0.0,
+                            time_limit_sec=self.time_limit,
+                            time_taken_sec=time_taken,
+                            success=True,
+                            score_awarded=points // len(self.active_targets),
+                        ))
+                    self.bridge.send_hud_stats(self.round_number, self.score)
+                    return
+            else:
+                self.hold_elapsed = max(0.0, self.hold_elapsed - elapsed * 2.0)
 
             if self.time_left <= 0:
                 self.state = self.STATE_GAME_OVER
-                self.metrics.record_round(RoundMetric(
-                    round_number=self.round_number,
-                    target_quadrant=self.target_quadrant,
-                    target_action=self.target_action,
-                    target_threshold_mm=self.target_threshold,
-                    final_height_mm=current_h,
-                    time_limit_sec=self.time_limit,
-                    time_taken_sec=self.time_limit,
-                    success=False,
-                    score_awarded=0
-                ))
+                for q_idx, (act, th_mm) in self.active_targets.items():
+                    self.metrics.record_round(RoundMetric(
+                        round_number=self.round_number,
+                        target_quadrant=q_idx,
+                        target_action=act,
+                        target_threshold_mm=th_mm,
+                        final_height_mm=heights[q_idx] if q_idx < len(heights) else 0.0,
+                        time_limit_sec=self.time_limit,
+                        time_taken_sec=self.time_limit,
+                        success=False,
+                        score_awarded=0,
+                    ))
                 self.metrics.export_session()
                 self.bridge.send_hud_timer(0.0)
                 self.bridge.send_hud_title(f"FIN DEL JUEGO - {self.score} PTS")
@@ -267,19 +323,20 @@ class QuadrantTherapyGame(ISandboxGame):
         num_cells = self.cols * self.rows
         for idx in range(num_cells):
             curr_h = heights[idx] if idx < len(heights) else 0.0
-            is_target = (self.state in (self.STATE_ROUND_ACTIVE, self.STATE_ROUND_WON)) and (idx == self.target_quadrant)
+            is_target = (self.state in (self.STATE_ROUND_ACTIVE, self.STATE_ROUND_WON)) and (idx in self.active_targets)
 
             if self.state == self.STATE_ROUND_WON and is_target:
                 elapsed_win = min(1.0, (now - self.round_win_time) / max(0.2, cfg.WIN_PAUSE_SEC))
                 flash_col = _lerp_color(self.palette["target_success"], self.palette["cyan_base"], elapsed_win)
                 self.bridge.send_cell_state(idx, flash_col[0], flash_col[1], flash_col[2], 1.0)
             elif self.state == self.STATE_ROUND_ACTIVE and is_target:
+                act, th_mm = self.active_targets[idx]
                 action_col = (
                     self.palette["target_elevate"]
-                    if self.target_action == "ELEVATE"
+                    if act == "ELEVATE"
                     else self.palette["target_dig"]
                 )
-                progress = self._get_target_progress(curr_h)
+                progress = self._get_target_progress(curr_h, th_mm)
                 remaining = 1.0 - progress
                 active_color = _lerp_color(action_col, self.palette["target_success"], progress * 0.55)
                 self.bridge.send_cell_progress(
@@ -460,7 +517,7 @@ class QuadrantTherapyGame(ISandboxGame):
                 cell_rect = pygame.Rect(x0, y0, x1 - x0, y1 - y0)
 
                 curr_h = heights[idx] if idx < len(heights) else 0.0
-                is_target = (self.state in (self.STATE_ROUND_ACTIVE, self.STATE_ROUND_WON)) and (idx == self.target_quadrant)
+                is_target = (self.state in (self.STATE_ROUND_ACTIVE, self.STATE_ROUND_WON)) and (idx in self.active_targets)
 
                 if self.state == self.STATE_ROUND_WON and is_target:
                     elapsed_win = min(1.0, (now - self.round_win_time) / max(0.2, cfg.WIN_PAUSE_SEC))
@@ -468,12 +525,13 @@ class QuadrantTherapyGame(ISandboxGame):
                     pygame.draw.rect(surface, flash_col, cell_rect)
 
                 elif self.state == self.STATE_ROUND_ACTIVE and is_target:
+                    act, th_mm = self.active_targets[idx]
                     action_col = (
                         self.palette["target_elevate"]
-                        if self.target_action == "ELEVATE"
+                        if act == "ELEVATE"
                         else self.palette["target_dig"]
                     )
-                    progress = self._get_target_progress(curr_h)
+                    progress = self._get_target_progress(curr_h, th_mm)
                     pygame.draw.rect(surface, self.palette["cyan_base"], cell_rect)
 
                     remaining = 1.0 - progress
@@ -603,12 +661,13 @@ class QuadrantTherapyGame(ISandboxGame):
                 idx = r * self.cols + c
                 cell_r = pygame.Rect(grid_box.x + c * cw + 4, grid_box.y + r * ch + 4, cw - 8, ch - 8)
                 curr_h = heights[idx] if idx < len(heights) else 0.0
-                is_target = (self.state in (self.STATE_ROUND_ACTIVE, self.STATE_ROUND_WON)) and (idx == self.target_quadrant)
+                is_target = (self.state in (self.STATE_ROUND_ACTIVE, self.STATE_ROUND_WON)) and (idx in self.active_targets)
 
+                act, th_mm = self.active_targets.get(idx, (self.target_action, self.target_threshold))
                 bg_c = (38, 48, 66) if is_target else (28, 35, 48)
                 border_c = (
                     self.palette["target_elevate"]
-                    if (is_target and self.target_action == "ELEVATE")
+                    if (is_target and act == "ELEVATE")
                     else (self.palette["target_dig"] if is_target else (65, 80, 105))
                 )
                 pygame.draw.rect(surface, bg_c, cell_r, border_radius=6)
@@ -622,9 +681,9 @@ class QuadrantTherapyGame(ISandboxGame):
                 surface.blit(font_mono.render(mm_str, True, mm_col), (cell_r.x + 8, cell_r.y + 23))
 
                 if is_target:
-                    prog = self._get_target_progress(curr_h)
-                    act_word = "PONER (Rojo)" if self.target_action == "ELEVATE" else "SACAR (Verde)"
-                    meta_str = f"{act_word} -> {self.target_threshold:+.0f} mm ({int(prog * 100)}%)"
+                    prog = self._get_target_progress(curr_h, th_mm)
+                    act_word = "PONER (Rojo)" if act == "ELEVATE" else "SACAR (Verde)"
+                    meta_str = f"{act_word} -> {th_mm:+.0f} mm ({int(prog * 100)}%)"
                     surface.blit(font_body.render(meta_str, True, (255, 220, 110)), (cell_r.x + 8, cell_r.y + 42))
 
                     bar_r = pygame.Rect(cell_r.x + 8, cell_r.bottom - 12, cell_r.width - 16, 7)
@@ -666,10 +725,11 @@ class QuadrantTherapyGame(ISandboxGame):
         col2_x = stats_box.x + int(stats_box.width * 0.46)
         sy = stats_box.y + 9
 
+        hold_str = f" | Sostén: {self.hold_elapsed:.2f}/{cfg.HOLD_TIME_SEC:.1f}s" if cfg.HOLD_TIME_SEC > 0 else ""
         metrics_left = [
             f"Paciente ID: {self.metrics.patient_id}",
-            f"Estado: {self.state} (Nivel {self.round_number})",
-            f"Tiempo: {max(0.0, self.time_left):.2f} s / {self.time_limit:.1f} s",
+            f"Estado: {self.state} (Nivel {self.round_number} | Obj: {max(1, len(self.active_targets))})",
+            f"Tiempo: {max(0.0, self.time_left):.2f}s / {self.time_limit:.1f}s{hold_str}",
             f"Rondas: {len(won_rounds)}/{len(rounds)} | Puntaje: {self.score}",
         ]
         metrics_right = [
@@ -817,7 +877,7 @@ class QuadrantTherapyGame(ISandboxGame):
     def _render_easy_config_body(self, surface, body_rect, font_sec, font_body, font_mono):
         cfg = self.config_mgr.config
         x0 = body_rect.x + 14
-        y0 = body_rect.y + 12
+        y0 = body_rect.y + 10
         avail_w = body_rect.width - 28
 
         hdr = font_sec.render(
@@ -826,11 +886,11 @@ class QuadrantTherapyGame(ISandboxGame):
             (0, 200, 240),
         )
         surface.blit(hdr, (x0, y0))
-        y0 += 26
+        y0 += 24
 
-        row_h = 54
+        row_h = 46
         for cat_key, cat_label, options in EASY_CATEGORIES_META:
-            row_rect = pygame.Rect(x0, y0, avail_w, row_h - 6)
+            row_rect = pygame.Rect(x0, y0, avail_w, row_h - 5)
             pygame.draw.rect(surface, (26, 34, 48), row_rect, border_radius=6)
             pygame.draw.rect(surface, (45, 60, 82), row_rect, 1, border_radius=6)
 
@@ -844,8 +904,8 @@ class QuadrantTherapyGame(ISandboxGame):
 
             for i, (opt_code, opt_text) in enumerate(options):
                 bx = btns_area_x + i * (opt_w + 6)
-                by = row_rect.y + 7
-                brect = pygame.Rect(bx, by, opt_w, row_rect.height - 14)
+                by = row_rect.y + 6
+                brect = pygame.Rect(bx, by, opt_w, row_rect.height - 12)
 
                 selected = (curr_val == opt_code)
                 bg_c = (0, 150, 195) if selected else (38, 48, 66)
@@ -860,26 +920,26 @@ class QuadrantTherapyGame(ISandboxGame):
             y0 += row_h
 
         # Resumen inferior de traducción numérica
-        y0 += 6
-        sum_rect = pygame.Rect(x0, y0, avail_w, max(48, body_rect.bottom - y0 - 10))
+        y0 += 4
+        sum_rect = pygame.Rect(x0, y0, avail_w, max(46, body_rect.bottom - y0 - 8))
         pygame.draw.rect(surface, (15, 20, 28), sum_rect, border_radius=6)
         pygame.draw.rect(surface, (45, 65, 90), sum_rect, 1, border_radius=6)
 
         s1 = (
             f"Valores Activos -> Tiempo Base: {cfg.BASE_TIME_LIMIT_SEC:.1f}s (mín {cfg.MIN_TIME_LIMIT_SEC:.1f}s) | "
-            f"Poner: +{cfg.ELEVATE_THRESHOLD_MM:.0f}mm | Sacar: {cfg.DIG_THRESHOLD_MM:.0f}mm"
+            f"Poner: +{cfg.ELEVATE_THRESHOLD_MM:.0f}mm | Sacar: {cfg.DIG_THRESHOLD_MM:.0f}mm | Sostén: {cfg.HOLD_TIME_SEC:.1f}s"
         )
         s2 = (
-            f"Cuadrícula Inicial: {cfg.INITIAL_COLS}x{cfg.INITIAL_ROWS} (Etapa máx: {cfg.MAX_GRID_STAGE}) | "
-            f"Tolerancia Nivelado: ±{cfg.FLAT_TOLERANCE_MM:.0f}mm | Acción: {cfg.ACTION_CATEGORY}"
+            f"Cuadrícula: {cfg.INITIAL_COLS}x{cfg.INITIAL_ROWS} (Etapa: {cfg.MAX_GRID_STAGE}) | "
+            f"Nivelado: ±{cfg.FLAT_TOLERANCE_MM:.0f}mm | Acción: {cfg.ACTION_CATEGORY} | Sim: {cfg.MAX_SIMULTANEOUS_TARGETS}"
         )
         surface.blit(font_mono.render(s1, True, (150, 220, 250)), (sum_rect.x + 12, sum_rect.y + 8))
-        surface.blit(font_mono.render(s2, True, (150, 220, 250)), (sum_rect.x + 12, sum_rect.y + 28))
+        surface.blit(font_mono.render(s2, True, (150, 220, 250)), (sum_rect.x + 12, sum_rect.y + 26))
 
     def _render_advanced_config_body(self, surface, body_rect, font_sec, font_body, font_mono):
         cfg = self.config_mgr.config
         x0 = body_rect.x + 12
-        y0 = body_rect.y + 10
+        y0 = body_rect.y + 8
         avail_w = body_rect.width - 24
 
         hdr = font_sec.render(
@@ -888,10 +948,10 @@ class QuadrantTherapyGame(ISandboxGame):
             (255, 205, 90),
         )
         surface.blit(hdr, (x0, y0))
-        y0 += 24
+        y0 += 22
 
         col_w = (avail_w - 12) // 2
-        row_h = 38
+        row_h = 34
 
         for idx, (fname, flabel, ftype, _, _, _) in enumerate(ADVANCED_FIELDS_META):
             col_idx = idx % 2

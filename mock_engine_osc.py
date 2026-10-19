@@ -149,7 +149,7 @@ class MockCppEngine:
                 self.heights[0] = 12.0
                 return
 
-            if "aplane la arena" in title_lower:
+            if "aplane la arena" in title_lower or "nivela la arena" in title_lower:
                 # Nivelar suavemente todos los cuadrantes hacia 0.0 mm
                 for i in range(len(self.heights)):
                     if abs(self.heights[i]) < 1.5:
@@ -205,6 +205,7 @@ def run_self_test() -> int:
     Ejecuta una prueba de integración de red verificando:
       1. Paquete binario emitido hacia el adaptador de entrada -> OSCSandInputAdapter
       2. Comandos de proyección emitidos -> Servidor receptor del simulador (:17001)
+      3. Redimensionamiento dinámico de cuadrícula (2x2 -> 4x2) vía '/render/grid/setup'
     (Utiliza los puertos 17000 y 17001 para evitar colisiones con instancias en ejecución).
     """
     import os
@@ -238,7 +239,7 @@ def run_self_test() -> int:
         raw_sock.close()
 
         received_heights = provider.get_heights()
-        print(f"  [1/2] TX Binario C++ (:{tx_test_port}) -> RX Juego: Enviado={test_heights} | Recibido={received_heights}")
+        print(f"  [1/3] TX Binario C++ (:{tx_test_port}) -> RX Juego: Enviado={test_heights} | Recibido={received_heights}")
         ok_tx = all(abs(a - b) < 0.01 for a, b in zip(test_heights, received_heights))
 
         # 2. Simular envío de proyección desde el Juego hacia el Motor C++ (:17001)
@@ -250,7 +251,7 @@ def run_self_test() -> int:
         time.sleep(0.1)
 
         print(
-            f"  [2/2] TX Juego (:{rx_test_port}) -> RX Motor C++: Paquetes recibidos={engine.rx_packet_count} | "
+            f"  [2/3] TX Juego (:{rx_test_port}) -> RX Motor C++: Paquetes recibidos={engine.rx_packet_count} | "
             f"Nivel={engine.current_round} | Puntaje={engine.current_score} | "
             f"Escala Q1={engine.cell_inner_scale.get(0, 0.0):.2f}"
         )
@@ -261,8 +262,21 @@ def run_self_test() -> int:
             and abs(engine.cell_inner_scale.get(0, 0.0) - 0.65) < 0.01
         )
 
-        if ok_tx and ok_rx:
-            print("=== RESULTADO: CONEXIÓN BIDIRECCIONAL VERIFICADA EXITOSAMENTE (OK) ===")
+        # 3. Verificar escalado dinámico de cuadrícula (2x2 -> 4x2 = 8 celdas)
+        provider.set_grid_size(4, 2)
+        bridge.send_grid_setup(4, 2)
+        time.sleep(0.08)
+        engine.send_grid_frame()
+        time.sleep(0.08)
+        resized_heights = provider.get_heights()
+        ok_resize = (engine.cols == 4 and engine.rows == 2 and len(resized_heights) == 8)
+        print(
+            f"  [3/3] Escalado Dinámico '/render/grid/setup' (2x2 -> 4x2): "
+            f"Motor=({engine.cols}x{engine.rows}) | Celdas RX={len(resized_heights)}"
+        )
+
+        if ok_tx and ok_rx and ok_resize:
+            print("=== RESULTADO: CONEXIÓN BIDIRECCIONAL Y ESCALADO VERIFICADOS EXITOSAMENTE (OK) ===")
             return 0
         else:
             print("=== RESULTADO: FALLO EN LA VERIFICACIÓN DE PAQUETES ===")
@@ -307,15 +321,15 @@ def main():
             if args.autopilot:
                 engine.step_autopilot(dt)
             else:
-                # Movimiento suave de prueba si no está en autopiloto
+                # Movimiento suave de prueba adaptado al número de celdas actual
                 import math
                 elapsed = now - t0
-                engine.heights = [
-                    round(20.0 * math.sin(elapsed * 0.8), 1),
-                    round(-20.0 * math.cos(elapsed * 0.6), 1),
-                    round(15.0 * math.sin(elapsed * 0.5 + 1.0), 1),
-                    round(-15.0 * math.cos(elapsed * 0.7 + 2.0), 1),
-                ]
+                with engine.lock:
+                    num_c = engine.cols * engine.rows
+                    engine.heights = [
+                        round(20.0 * math.sin(elapsed * (0.6 + 0.1 * (i % 4)) + i * 0.9), 1)
+                        for i in range(num_c)
+                    ]
 
             engine.send_grid_frame()
 
