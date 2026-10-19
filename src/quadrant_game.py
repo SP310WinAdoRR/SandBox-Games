@@ -3,18 +3,33 @@ import random
 import time
 import pygame
 
-from .data_provider import BaseDataProvider, EmulatorDataProvider
+from .data_provider import BaseDataProvider
 from .bridge_client import MagicSandBridgeClient
 from .metrics import RoundMetric, TherapyMetricsManager
+
+
+def _lerp_color(c1: tuple[int, int, int], c2: tuple[int, int, int], t: float) -> tuple[int, int, int]:
+    t = max(0.0, min(1.0, t))
+    return (
+        int(c1[0] + (c2[0] - c1[0]) * t),
+        int(c1[1] + (c2[1] - c1[1]) * t),
+        int(c1[2] + (c2[2] - c1[2]) * t),
+    )
 
 
 class QuadrantTherapyGame:
     """
     Videojuego de modulación de alturas por cuadrantes para rehabilitación motriz.
-    Basado en las especificaciones de 'ARSandbox2.pdf'.
+    - Cuadrícula a pantalla completa sin huecos ni márgenes.
+    - Código de color sin conflictos:
+        * Cian: Estado neutro / equilibrado.
+        * Rojo: Poner / acumular arena (ELEVATE).
+        * Verde: Sacar / excavar arena (DIG).
+        * Dorado / Blanco brillante: Señal de umbral alcanzado (éxito).
+    - Temporizador central tipo torta con alta traslucidad.
+    - Nivel y puntaje superpuestos sobre el mapa sin ocupar espacio dedicado.
     """
 
-    # Estados de la máquina de juego
     STATE_WELCOME = "WELCOME"
     STATE_PREPARE_FLAT = "PREPARE_FLAT"
     STATE_ROUND_ACTIVE = "ROUND_ACTIVE"
@@ -26,17 +41,15 @@ class QuadrantTherapyGame:
         self.bridge = bridge or MagicSandBridgeClient()
         self.metrics = TherapyMetricsManager(patient_id=patient_id)
 
-        # Dimensiones de la cuadrícula (comienza 2x2 = 4 cuadrantes)
         self.cols = 2
         self.rows = 2
         self.provider.set_grid_size(self.cols, self.rows)
 
-        # Estado del juego
         self.state = self.STATE_WELCOME
         self.round_number = 0
         self.score = 0
         self.target_quadrant = 0
-        self.target_action = "ELEVATE"   # "ELEVATE" (+mm) o "DIG" (-mm)
+        self.target_action = "ELEVATE"   # "ELEVATE" (Rojo: poner arena) o "DIG" (Verde: sacar arena)
         self.target_threshold = 30.0     # mm
         self.time_limit = 15.0           # segundos
         self.time_left = 15.0
@@ -44,76 +57,82 @@ class QuadrantTherapyGame:
         self.round_win_time = 0.0
         self.last_update_time = time.time()
 
-        # Configuración visual
+        # Paleta cromática sin conflicto entre Rojo (poner) y Verde (sacar)
         self.palette = {
-            "bg": (15, 18, 25),
-            "grid_border": (60, 75, 100),
-            "cell_idle": (28, 36, 52),
-            "cell_elevate": (0, 180, 216),    # Azul cian brillante para elevar
-            "cell_dig": (247, 127, 0),        # Naranja vivo para excavar
-            "text": (240, 245, 255),
-            "timer_bar": (46, 196, 182),
-            "timer_danger": (230, 57, 70),
-            "accent": (255, 209, 102),
+            "cyan_base": (0, 184, 220),       # Azul cian para cuadrantes neutros
+            "target_elevate": (255, 30, 39),  # Rojo vivo -> Poner arena
+            "target_dig": (0, 205, 85),       # Verde vivo -> Sacar arena
+            "target_success": (255, 230, 90), # Destello dorado/blanco al cumplir la meta
+            "grid_line": (0, 0, 0),           # Líneas divisorias negras sólidas
         }
 
     def start_new_game(self):
         self.round_number = 0
         self.score = 0
+        self.cols = 2
+        self.rows = 2
+        self.provider.set_grid_size(self.cols, self.rows)
         self.next_round()
 
     def next_round(self):
         self.round_number += 1
+
+        # Escalado progresivo de cuadrantes (4 -> 8 -> 16)
+        if self.round_number <= 4:
+            new_cols, new_rows = 2, 2
+        elif self.round_number <= 8:
+            new_cols, new_rows = 4, 2
+        else:
+            new_cols, new_rows = 4, 4
+
+        if (new_cols, new_rows) != (self.cols, self.rows):
+            self.cols, self.rows = new_cols, new_rows
+            self.provider.set_grid_size(self.cols, self.rows)
+
         num_cells = self.cols * self.rows
 
-        # Dificultad adaptativa inspirada en roguelite / Balatro
-        if self.round_number <= 3:
-            # Rondas iniciales: acumulación simple de arena
+        if self.round_number <= 2:
             self.target_action = "ELEVATE"
             self.target_threshold = 28.0 + (self.round_number * 3.0)
             self.time_limit = max(10.0, 16.0 - (self.round_number * 1.0))
         elif self.round_number <= 6:
-            # Rondas medias: alternar excavación y acumulación
             self.target_action = random.choice(["ELEVATE", "DIG"])
             self.target_threshold = 35.0 if self.target_action == "ELEVATE" else -25.0
             self.time_limit = 12.0
         else:
-            # Rondas avanzadas: mayor precisión y menor tiempo
             self.target_action = random.choice(["ELEVATE", "DIG"])
-            self.target_threshold = 42.0 if self.target_action == "ELEVATE" else -32.0
-            self.time_limit = max(7.0, 11.0 - (self.round_number * 0.4))
+            self.target_threshold = 40.0 if self.target_action == "ELEVATE" else -30.0
+            self.time_limit = max(7.0, 11.5 - (self.round_number * 0.35))
 
         self.target_quadrant = random.randint(0, num_cells - 1)
         self.state = self.STATE_PREPARE_FLAT
 
-        # Informar a Magic Sand (proyector)
         self.bridge.send_grid_setup(self.cols, self.rows)
-        self.bridge.send_hud_title(f"RONDA {self.round_number}: APLANAR ARENA")
+        self.bridge.send_hud_title(f"NIVEL {self.round_number}")
 
     def _start_active_phase(self):
         self.state = self.STATE_ROUND_ACTIVE
         self.time_left = self.time_limit
         self.round_start_time = time.time()
 
-        action_text = "ACUMULA ARENA" if self.target_action == "ELEVATE" else "EXCAVA ARENA"
-        sign = "+" if self.target_threshold > 0 else ""
-        self.bridge.send_hud_title(f"Q{self.target_quadrant + 1}: {action_text} ({sign}{int(self.target_threshold)} mm)")
+    def _get_target_progress(self, current_h: float) -> float:
+        """Retorna el progreso normalizado [0.0, 1.0] hacia el umbral de altura."""
+        if abs(self.target_threshold) < 1e-5:
+            return 1.0
+        return max(0.0, min(1.0, current_h / self.target_threshold))
 
     def update(self):
         now = time.time()
         dt = now - self.last_update_time
         self.last_update_time = now
 
-        # 1. Obtener lecturas de altura en tiempo real
         heights = self.provider.get_heights()
         if not heights or self.target_quadrant >= len(heights):
             return
 
         current_h = heights[self.target_quadrant]
 
-        # 2. Lógica según estado
         if self.state == self.STATE_PREPARE_FLAT:
-            # Verifica si la arena está razonablemente nivelada (entre -5mm y +5mm)
             is_flat = all(abs(h) < 7.0 for h in heights)
             if is_flat:
                 self._start_active_phase()
@@ -121,20 +140,10 @@ class QuadrantTherapyGame:
         elif self.state == self.STATE_ROUND_ACTIVE:
             self.time_left -= dt
             timer_ratio = max(0.0, self.time_left / self.time_limit)
+            self.bridge.send_hud_timer(timer_ratio)
 
-            # Notificar progreso al HUD proyectado
-            t_color = self.palette["timer_danger"] if timer_ratio < 0.25 else self.palette["timer_bar"]
-            self.bridge.send_hud_timer(timer_ratio, *t_color)
-
-            # --- VALIDACIÓN CONTINUA EN TIEMPO REAL ---
-            success = False
-            if self.target_action == "ELEVATE" and current_h >= self.target_threshold:
-                success = True
-            elif self.target_action == "DIG" and current_h <= self.target_threshold:
-                success = True
-
-            if success:
-                # ¡Ronda superada inmediatamente!
+            progress = self._get_target_progress(current_h)
+            if progress >= 1.0:
                 time_taken = self.time_limit - self.time_left
                 points = int(100 + (self.time_left * 20))
                 self.score += points
@@ -152,11 +161,8 @@ class QuadrantTherapyGame:
                     success=True,
                     score_awarded=points
                 ))
-
-                self.bridge.send_hud_title(f"¡EXCELENTE! +{points} pts")
                 return
 
-            # Tiempo agotado -> Game Over
             if self.time_left <= 0:
                 self.state = self.STATE_GAME_OVER
                 self.metrics.record_round(RoundMetric(
@@ -166,160 +172,188 @@ class QuadrantTherapyGame:
                     target_threshold_mm=self.target_threshold,
                     final_height_mm=current_h,
                     time_limit_sec=self.time_limit,
-                    time_taken_sec=self.time_limit,
+                    time_taken_sec=time_limit_sec if (time_limit_sec := self.time_limit) else 0.0,
                     success=False,
                     score_awarded=0
                 ))
                 self.metrics.export_session()
-                self.bridge.send_hud_title("FIN DE SESIÓN - TIEMPO AGOTADO")
 
         elif self.state == self.STATE_ROUND_WON:
-            # Pausa de 1.8 segundos para celebrar y continuar
-            if now - self.round_win_time > 1.8:
+            if now - self.round_win_time > 1.2:
                 self.next_round()
 
     def handle_input(self, event):
-        """Maneja eventos de teclado y ratón (para el emulador)."""
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_SPACE:
                 if self.state in (self.STATE_WELCOME, self.STATE_GAME_OVER):
                     self.start_new_game()
                 elif self.state == self.STATE_PREPARE_FLAT:
-                    # Permite saltar la fase de aplanado manualmente
                     self._start_active_phase()
             elif event.key == pygame.K_r:
                 self.provider.reset()
 
     def render(self, surface: pygame.Surface, is_emulator: bool = True):
-        """Dibuja la interfaz completa del juego sobre la superficie de Pygame."""
         width, height = surface.get_size()
-        surface.fill(self.palette["bg"])
-
-        font_large = pygame.font.SysFont("Arial", int(height * 0.055), bold=True)
-        font_med = pygame.font.SysFont("Arial", int(height * 0.035), bold=True)
-        font_small = pygame.font.SysFont("Arial", int(height * 0.024))
-
-        # --- ÁREA SUPERIOR: BARRA DE TIEMPO Y ESTADÍSTICAS ---
-        hud_height = int(height * 0.14)
-        pygame.draw.rect(surface, (20, 25, 36), (0, 0, width, hud_height))
-        pygame.draw.line(surface, self.palette["grid_border"], (0, hud_height), (width, hud_height), 2)
-
-        # Textos de Score y Ronda
-        score_surf = font_med.render(f"PUNTAJE: {self.score}", True, self.palette["accent"])
-        round_surf = font_med.render(f"RONDA: {self.round_number}", True, self.palette["text"])
-        surface.blit(score_surf, (25, int(hud_height * 0.2)))
-        surface.blit(round_surf, (width - round_surf.get_width() - 25, int(hud_height * 0.2)))
-
-        # Barra de tiempo
-        timer_ratio = max(0.0, self.time_left / self.time_limit) if self.state == self.STATE_ROUND_ACTIVE else 1.0
-        bar_w = int(width * 0.45)
-        bar_h = 16
-        bar_x = (width - bar_w) // 2
-        bar_y = int(hud_height * 0.65)
-        pygame.draw.rect(surface, (40, 50, 70), (bar_x, bar_y, bar_w, bar_h), border_radius=8)
-        fill_color = self.palette["timer_danger"] if timer_ratio < 0.25 else self.palette["timer_bar"]
-        pygame.draw.rect(surface, fill_color, (bar_x, bar_y, int(bar_w * timer_ratio), bar_h), border_radius=8)
-
-        # --- ÁREA INFERIOR: MALLA DE CUADRANTES DE LA ARENA ---
-        grid_top = hud_height + 15
-        grid_margin = 25
-        grid_w = width - (grid_margin * 2)
-        grid_h = height - grid_top - (50 if is_emulator else 25)
-
-        cell_w = grid_w // self.cols
-        cell_h = grid_h // self.rows
         heights = self.provider.get_heights()
+        now = time.time()
 
+        # 1. CUADRANTES A PANTALLA COMPLETA (0, 0, width, height)
         for r in range(self.rows):
             for c in range(self.cols):
                 idx = r * self.cols + c
-                cell_x = grid_margin + (c * cell_w)
-                cell_y = grid_top + (r * cell_h)
-                cell_rect = pygame.Rect(cell_x + 6, cell_y + 6, cell_w - 12, cell_h - 12)
+                x0 = int(c * width / self.cols)
+                x1 = int((c + 1) * width / self.cols)
+                y0 = int(r * height / self.rows)
+                y1 = int((r + 1) * height / self.rows)
+                cell_rect = pygame.Rect(x0, y0, x1 - x0, y1 - y0)
 
-                is_target = (self.state in (self.STATE_ROUND_ACTIVE, self.STATE_ROUND_WON)) and (idx == self.target_quadrant)
                 curr_h = heights[idx] if idx < len(heights) else 0.0
+                is_target = (self.state in (self.STATE_ROUND_ACTIVE, self.STATE_ROUND_WON)) and (idx == self.target_quadrant)
 
-                # Color de fondo de la celda
-                if is_target:
-                    target_color = self.palette["cell_elevate"] if self.target_action == "ELEVATE" else self.palette["cell_dig"]
-                    # Efecto de pulso suave
-                    pulse = 0.85 + (0.15 * math.sin(time.time() * 6.0))
-                    c_rgb = tuple(int(ch * pulse) for ch in target_color)
+                if self.state == self.STATE_ROUND_WON and is_target:
+                    # Meta alcanzada: destello dorado/blanco que se funde hacia el cian neutro
+                    elapsed_win = min(1.0, (now - self.round_win_time) / 1.2)
+                    flash_col = _lerp_color(self.palette["target_success"], self.palette["cyan_base"], elapsed_win)
+                    pygame.draw.rect(surface, flash_col, cell_rect)
+
+                elif self.state == self.STATE_ROUND_ACTIVE and is_target:
+                    # Rojo = Poner arena (ELEVATE) | Verde = Sacar arena (DIG)
+                    action_col = (
+                        self.palette["target_elevate"]
+                        if self.target_action == "ELEVATE"
+                        else self.palette["target_dig"]
+                    )
+                    progress = self._get_target_progress(curr_h)
+
+                    # El fondo del cuadrante es Cian neutro y el color de acción (Rojo o Verde)
+                    # se va reduciendo/cerrando proporcionalmente al progreso hasta desaparecer en Cian,
+                    # a la vez que aumenta su brillo hacia blanco/dorado al acercarse al 100%.
+                    pygame.draw.rect(surface, self.palette["cyan_base"], cell_rect)
+
+                    remaining = 1.0 - progress
+                    active_color = _lerp_color(action_col, self.palette["target_success"], progress * 0.55)
+                    rem_w = max(0, int(cell_rect.width * math.sqrt(remaining)))
+                    rem_h = max(0, int(cell_rect.height * math.sqrt(remaining)))
+                    rem_rect = pygame.Rect(
+                        cell_rect.centerx - rem_w // 2,
+                        cell_rect.centery - rem_h // 2,
+                        rem_w,
+                        rem_h
+                    )
+                    pygame.draw.rect(surface, active_color, rem_rect)
+
+                elif self.state == self.STATE_PREPARE_FLAT:
+                    # En fase de nivelación: si sobra arena (> +7mm) muestra leve matiz verde (sacar),
+                    # si falta arena (< -7mm) muestra leve matiz rojo (poner), guiando sin números
+                    if curr_h > 7.0:
+                        t = min(0.55, (curr_h - 7.0) / 50.0)
+                        col = _lerp_color(self.palette["cyan_base"], self.palette["target_dig"], t)
+                    elif curr_h < -7.0:
+                        t = min(0.55, (abs(curr_h) - 7.0) / 50.0)
+                        col = _lerp_color(self.palette["cyan_base"], self.palette["target_elevate"], t)
+                    else:
+                        col = self.palette["cyan_base"]
+                    pygame.draw.rect(surface, col, cell_rect)
+
                 else:
-                    c_rgb = self.palette["cell_idle"]
+                    pygame.draw.rect(surface, self.palette["cyan_base"], cell_rect)
 
-                pygame.draw.rect(surface, c_rgb, cell_rect, border_radius=12)
-                border_color = (255, 255, 255) if is_target else self.palette["grid_border"]
-                border_thick = 4 if is_target else 2
-                pygame.draw.rect(surface, border_color, cell_rect, border_thick, border_radius=12)
+        # 2. LÍNEAS DIVISORIAS NEGRAS SÓLIDAS
+        line_thickness = 5
+        for c in range(1, self.cols):
+            x = int(c * width / self.cols)
+            pygame.draw.line(surface, self.palette["grid_line"], (x, 0), (x, height), line_thickness)
+        for r in range(1, self.rows):
+            y = int(r * height / self.rows)
+            pygame.draw.line(surface, self.palette["grid_line"], (0, y), (width, y), line_thickness)
 
-                # Información dentro de la celda
-                num_text = font_large.render(f"Q{idx + 1}", True, (255, 255, 255) if is_target else (120, 140, 170))
-                surface.blit(num_text, (cell_rect.x + 18, cell_rect.y + 14))
-
-                h_str = f"{curr_h:+.1f} mm"
-                h_text = font_med.render(h_str, True, self.palette["text"])
-                surface.blit(h_text, (cell_rect.centerx - (h_text.get_width() // 2), cell_rect.centery - 10))
-
-                if is_target:
-                    action_lbl = f"META: {self.target_threshold:+.0f} mm"
-                    act_text = font_small.render(action_lbl, True, self.palette["accent"])
-                    surface.blit(act_text, (cell_rect.centerx - (act_text.get_width() // 2), cell_rect.centery + 30))
-
-        # --- OVERLAYS SEGÚN ESTADO ---
-        if self.state == self.STATE_WELCOME:
-            self._draw_modal_box(surface, "TERAPIA MOTRIZ - CAJA DE ARENA AR",
-                                 "Presiona [ESPACIO] para comenzar la sesión",
-                                 font_large, font_med)
-        elif self.state == self.STATE_PREPARE_FLAT:
-            self._draw_modal_box(surface, "FASE DE PREPARACIÓN",
-                                 "Aplana la arena para nivelar el terreno (o presiona [ESPACIO])",
-                                 font_large, font_med, color=(40, 120, 180))
-        elif self.state == self.STATE_ROUND_WON:
-            self._draw_banner(surface, f"¡RONDA {self.round_number} COMPLETADA!", font_large, color=(46, 196, 182))
-        elif self.state == self.STATE_GAME_OVER:
-            self._draw_modal_box(surface, "SESIÓN FINALIZADA",
-                                 f"Rondas superadas: {self.metrics.session.rounds_completed} | Puntaje: {self.score}\nPresiona [ESPACIO] para reiniciar",
-                                 font_large, font_med, color=(200, 50, 60))
-
-        # Instrucciones del emulador en la parte inferior
-        if is_emulator:
-            footer_text = font_small.render(
-                "MODO EMULADOR: [Clic Izquierdo]: Subir arena  |  [Clic Derecho]: Excavar  |  [R]: Aplanar arena",
-                True, (140, 160, 190)
+        # 3. TORTA DE TIEMPO CENTRAL CON ALTA TRASLUCIDAD
+        if self.state in (self.STATE_ROUND_ACTIVE, self.STATE_ROUND_WON):
+            timer_ratio = max(0.0, min(1.0, self.time_left / self.time_limit))
+            self._draw_translucent_pie_timer(
+                surface,
+                width // 2,
+                height // 2,
+                int(min(width, height) * 0.20),
+                timer_ratio
             )
-            surface.blit(footer_text, (width // 2 - footer_text.get_width() // 2, height - 30))
 
-    def _draw_modal_box(self, surface, title, subtitle, font_title, font_sub, color=(20, 30, 48)):
-        w, h = surface.get_size()
-        box_w = int(w * 0.75)
-        box_h = int(h * 0.35)
-        box_rect = pygame.Rect((w - box_w) // 2, (h - box_h) // 2, box_w, box_h)
+        # 4. NIVEL Y PUNTAJE SUPERPUESTOS SOBRE EL MAPA
+        self._draw_superimposed_hud(surface, width, height)
 
-        overlay = pygame.Surface((w, h), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 160))
-        surface.blit(overlay, (0, 0))
+    def _draw_translucent_pie_timer(self, surface: pygame.Surface, cx: int, cy: int, radius: int, ratio: float):
+        overlay = pygame.Surface((radius * 2 + 10, radius * 2 + 10), pygame.SRCALPHA)
+        ocx, ocy = radius + 5, radius + 5
 
-        pygame.draw.rect(surface, color, box_rect, border_radius=16)
-        pygame.draw.rect(surface, (255, 255, 255), box_rect, 3, border_radius=16)
+        # Sombra circular muy sutil
+        pygame.draw.circle(overlay, (0, 0, 0, 35), (ocx, ocy), radius)
 
-        t_surf = font_title.render(title, True, (255, 255, 255))
-        surface.blit(t_surf, (box_rect.centerx - t_surf.get_width() // 2, box_rect.y + 40))
+        if ratio > 0.001:
+            # Alta traslucidad para dejar ver claramente los cuadrantes y líneas debajo
+            pie_color = (255, 255, 255, 75) if ratio > 0.25 else (255, 235, 80, 95)
 
-        lines = subtitle.split("\n")
-        y_offset = box_rect.y + 110
-        for line in lines:
-            s_surf = font_sub.render(line, True, self.palette["accent"])
-            surface.blit(s_surf, (box_rect.centerx - s_surf.get_width() // 2, y_offset))
-            y_offset += 35
+            num_segments = max(3, int(90 * ratio))
+            start_angle = -math.pi / 2
+            end_angle = start_angle + (2 * math.pi * ratio)
 
-    def _draw_banner(self, surface, message, font, color):
-        w, h = surface.get_size()
-        banner_rect = pygame.Rect(0, int(h * 0.42), w, int(h * 0.16))
-        pygame.draw.rect(surface, color, banner_rect)
-        pygame.draw.line(surface, (255, 255, 255), (0, banner_rect.top), (w, banner_rect.top), 2)
-        pygame.draw.line(surface, (255, 255, 255), (0, banner_rect.bottom), (w, banner_rect.bottom), 2)
+            points = [(ocx, ocy)]
+            for i in range(num_segments + 1):
+                ang = start_angle + (end_angle - start_angle) * (i / num_segments)
+                px = ocx + int(radius * math.cos(ang))
+                py = ocy + int(radius * math.sin(ang))
+                points.append((px, py))
 
-        text_surf = font.render(message, True, (0, 20, 30))
-        surface.blit(text_surf, (w // 2 - text_surf.get_width() // 2, banner_rect.centery - text_surf.get_height() // 2))
+            if len(points) >= 3:
+                pygame.draw.polygon(overlay, pie_color, points)
+
+        pygame.draw.circle(overlay, (0, 0, 0, 65), (ocx, ocy), radius, 3)
+        surface.blit(overlay, (cx - ocx, cy - ocy))
+
+    def _draw_superimposed_hud(self, surface: pygame.Surface, width: int, height: int):
+        hud_layer = pygame.Surface((width, height), pygame.SRCALPHA)
+
+        font_hud = pygame.font.SysFont("Arial", int(height * 0.038), bold=True)
+        font_title = pygame.font.SysFont("Arial", int(height * 0.050), bold=True)
+        font_sub = pygame.font.SysFont("Arial", int(height * 0.032), bold=True)
+
+        # Posicionados dentro del margen seguro interior para evitar pérdidas por desborde del proyector
+        safe_x = int(width * 0.12)
+        safe_y = int(height * 0.08)
+
+        if self.round_number > 0:
+            lvl_shadow = font_hud.render(f"NIVEL {self.round_number}", True, (0, 0, 0, 100))
+            pts_shadow = font_hud.render(f"{self.score} PTS", True, (0, 0, 0, 100))
+            lvl_fg = font_hud.render(f"NIVEL {self.round_number}", True, (255, 255, 255, 135))
+            pts_fg = font_hud.render(f"{self.score} PTS", True, (255, 255, 255, 135))
+
+            hud_layer.blit(lvl_shadow, (safe_x + 2, safe_y + 2))
+            hud_layer.blit(lvl_fg, (safe_x, safe_y))
+
+            px = width - safe_x - pts_fg.get_width()
+            hud_layer.blit(pts_shadow, (px + 2, safe_y + 2))
+            hud_layer.blit(pts_fg, (px, safe_y))
+
+        cx, cy = width // 2, height // 2
+        if self.state == self.STATE_WELCOME:
+            self._blit_centered_translucent(hud_layer, "ESPACIO PARA INICIAR", font_title, cx, cy)
+        elif self.state == self.STATE_PREPARE_FLAT:
+            self._blit_centered_translucent(hud_layer, "NIVELA LA ARENA", font_title, cx, cy)
+        elif self.state == self.STATE_GAME_OVER:
+            self._blit_centered_translucent(hud_layer, f"FIN DEL JUEGO — {self.score} PTS", font_title, cx, cy - 22)
+            self._blit_centered_translucent(hud_layer, "ESPACIO PARA REINICIAR", font_sub, cx, cy + 28)
+
+        surface.blit(hud_layer, (0, 0))
+
+    def _blit_centered_translucent(self, layer: pygame.Surface, text: str, font: pygame.font.Font, cx: int, cy: int):
+        shadow = font.render(text, True, (0, 0, 0, 120))
+        fg = font.render(text, True, (255, 255, 255, 175))
+        pad_x, pad_y = 22, 10
+        bg_rect = pygame.Rect(
+            cx - fg.get_width() // 2 - pad_x,
+            cy - fg.get_height() // 2 - pad_y,
+            fg.get_width() + pad_x * 2,
+            fg.get_height() + pad_y * 2
+        )
+        pygame.draw.rect(layer, (0, 0, 0, 65), bg_rect, border_radius=10)
+        layer.blit(shadow, (cx - fg.get_width() // 2 + 2, cy - fg.get_height() // 2 + 2))
+        layer.blit(fg, (cx - fg.get_width() // 2, cy - fg.get_height() // 2))
