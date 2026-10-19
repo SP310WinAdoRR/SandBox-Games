@@ -31,9 +31,10 @@ class TherapyMetricsManager:
     Gestiona el registro de desempeño clínico y motor de los pacientes.
     Permite calcular estadísticas objetivas para terapeutas y exportar reportes.
     """
-    def __init__(self, patient_id: str = "PACIENTE_01", output_dir: str = "records"):
+    def __init__(self, patient_id: str = "PACIENTE_01", output_dir: str | None = None):
+        base_game_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.patient_id = patient_id
-        self.output_dir = output_dir
+        self.output_dir = output_dir or os.path.join(base_game_dir, "records")
         os.makedirs(self.output_dir, exist_ok=True)
         self.session = SessionData(
             patient_id=patient_id,

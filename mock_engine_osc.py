@@ -197,7 +197,14 @@ def run_self_test() -> int:
       2. MagicSandBridgeClient -> Servidor receptor del Motor (:17001)
     (Usa puertos 17000/17001 para no colisionar si ya tienes main.py abierto).
     """
+    import os
     import socket
+    import sys
+
+    game_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "quadrant_game")
+    if game_dir not in sys.path:
+        sys.path.insert(0, game_dir)
+
     from src.data_provider import OSCDataProvider
     from src.bridge_client import MagicSandBridgeClient
 

@@ -1,6 +1,11 @@
 import argparse
+import os
 import sys
 import pygame
+
+GAME_DIR = os.path.dirname(os.path.abspath(__file__))
+if GAME_DIR not in sys.path:
+    sys.path.insert(0, GAME_DIR)
 
 from src.data_provider import EmulatorDataProvider, OSCDataProvider
 from src.bridge_client import MagicSandBridgeClient
@@ -32,7 +37,7 @@ def main():
     parser.add_argument("--proj-height", type=int, default=720, help="Alto de la ventana de proyección (si hay 1 solo monitor)")
     args = parser.parse_args()
 
-    config_mgr = ConfigManager(configs_dir="configs")
+    config_mgr = ConfigManager(configs_dir=os.path.join(GAME_DIR, "configs"))
     config_mgr.load_env(args.env)
     cfg = config_mgr.config
 

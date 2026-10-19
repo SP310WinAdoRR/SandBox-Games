@@ -32,21 +32,27 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Ejecutar en Modo Emulador (En Casa / Pruebas con Ratón):
+### 2. Ejecutar el Juego de las Cajas (Modo Emulador en Casa):
 ```bash
-python3 main.py
+./.venv/bin/python quadrant_game/main.py
 ```
 * **Clic Izquierdo (mantener presionado):** Acumula / sube arena virtual en el cuadrante (+mm).
 * **Clic Derecho (mantener presionado):** Excava / retira arena virtual (-mm).
 * **Tecla [ESPACIO]:** Iniciar sesión o saltar fase de preparación.
+* **Tecla [TAB]:** Alternar entre pestaña de Monitoreo Clínico y Configuración (`.env`).
 * **Tecla [R]:** Aplanar la arena a nivel $0\text{ mm}$.
 * **Tecla [ESC]:** Salir y exportar métricas de la sesión.
 
 ### 3. Ejecutar en Modo Producción (En el Laboratorio con Kinect):
 ```bash
-python3 main.py --live --patient PACIENTE_01
+./.venv/bin/python quadrant_game/main.py --live --patient PACIENTE_01
 ```
-* Escuchará automáticamente los datos de elevación del sensor Kinect emitidos por Magic Sand en `127.0.0.1:7000`.
+* Escuchará automáticamente los datos de elevación del sensor Kinect emitidos por Magic Sand en `127.0.0.1:7000` y enviará la proyección al puerto `127.0.0.1:7001`.
+
+### 4. Prueba de Conexión / Simulador del Motor C++ (En la raíz):
+```bash
+./.venv/bin/python mock_engine_osc.py --self-test
+```
 
 ---
 
@@ -54,12 +60,17 @@ python3 main.py --live --patient PACIENTE_01
 
 ```
 SandBox-Games/
-├── main.py                 # Punto de entrada principal (Emulador o Live)
-├── requirements.txt        # Dependencias (pygame-ce, python-osc)
-├── records/                # Carpeta de reportes clínicos exportados (CSV/JSON)
-└── src/
-    ├── data_provider.py    # Abstracción desacoplada (Emulador de ratón vs. Receptor OSC)
-    ├── bridge_client.py    # Cliente emisor de comandos de render hacia Magic Sand
-    ├── metrics.py          # Gestor de métricas y telemetría de rehabilitación
-    └── quadrant_game.py    # Máquina de estados y renderizado del juego de cuadrantes
+├── README.md                   # Documentación general de la suite
+├── requirements.txt            # Dependencias (pygame-ce, python-osc)
+├── mock_engine_osc.py          # Herramienta de testeo/simulación del motor C++ (UDP/OSC)
+└── quadrant_game/              # Juego 1: Rehabilitación por Cuadrantes (Cajas)
+    ├── main.py                 # Punto de entrada del juego (Emulador o Live)
+    ├── configs/                # Perfiles de configuración (.env: default, baja/alta exigencia)
+    ├── records/                # Reportes clínicos exportados de las sesiones (CSV/JSON)
+    └── src/
+        ├── data_provider.py    # Proveedor de datos (Emulador de ratón vs. Receptor OSC)
+        ├── bridge_client.py    # Emisor UDP/OSC de comandos de proyección hacia C++
+        ├── config_manager.py   # Gestor de archivos .env (Modo Fácil y Modo Avanzado)
+        ├── metrics.py          # Registro y exportación de métricas clínicas
+        └── quadrant_game.py    # Lógica, progresión de niveles y UI de Telemetría/Proyección
 ```
